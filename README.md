@@ -1,7 +1,7 @@
 # pymodsynth
 Modular Synthesizer in Python
 
-Core Idea: Modular Synthesizers are "just" function generators with a nice user interface  Can we build something similar in Python?
+Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
 ## Random Ideas
 
@@ -18,13 +18,22 @@ Core Idea: Modular Synthesizers are "just" function generators with a nice user 
   - To get memory, you can make a stateful function (e.g., instance function of some class)
   - There will be a decorator probably
 
+- Interactive inputs
+  -  we will need some kind of interactive inputs that simulates knobs. maybe the multi touch trackpad? a mouse? the iPad?
+
 - We form a *graph* via the patch matrix
   - unclear how to create the graph of callables but should be easy
   - should have multiple threads, reload of graph happens in the background: **music should always continue**
 
 - Some form of live input would be cool, e.g., tracking the mouse?
 
+## Function examples
+
 ```
 def saw_tooth(t, duration=1):
   return t % duration
 ```
+
+## Links
+
+- [pyo](http://ajaxsoundstudio.com/software/pyo/) for audio?
