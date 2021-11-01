@@ -1,7 +1,7 @@
 # pymodsynth
 Modular Synthesizer in Python
 
-Corr IDea: Modular Synthesizers are "just" function generators with a nice user interface  CAn we build something similar in Python?
+Core Idea: Modular Synthesizers are "just" function generators with a nice user interface  Can we build something similar in Python?
 
 ## Random Ideas
 
