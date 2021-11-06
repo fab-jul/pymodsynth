@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Play a sine signal."""
+"""Play a sine signal.
+
+You need sounddevice==0.4.3, which needs portaudio, seems tough on Windows, see doc:
+
+https://python-sounddevice.readthedocs.io/en/0.4.3/installation.html
+"""
+
 import argparse
 import queue
 import sys
