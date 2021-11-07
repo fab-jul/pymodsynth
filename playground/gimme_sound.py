@@ -84,6 +84,7 @@ def gimme_sound(device, amplitude, frequency):
 def start_input_fetcher(timeout=1):
     print("Started. Type `h` to get started")
     time.sleep(3)
+    # Whether we should print the `Command:` prompt.
     print_command = True
     while 1:
         if _QUIT_EVENT.is_set():
