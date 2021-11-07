@@ -31,18 +31,14 @@ _COMMAND_QUEUE = queue.Queue()
 _QUIT_EVENT = threading.Event()
 
 
-class MakeSin:
+class MakeSignal:
 
-    def __init__(self, sample_rate, amplitude, frequency):
+    def __init__(self, sample_rate):
         self.sample_rate = sample_rate
-        self.amplitude = amplitude
-        self.frequency = frequency
         self.i = 0
         self.last_t = time.time()
 
-        self.output_generator = v1.OutputGeneratorV1(
-            #src=v1.SineSource(amplitude, frequency))
-            src=v1.SawSource(amplitude, frequency))
+        self.output_generator = v1.OutputGeneratorV1()
 
     def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
@@ -63,20 +59,14 @@ class MakeSin:
         t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
         delta = t - self.last_t
         self.last_t = t
-        #print(delta)
         if status:
             print(status, file=sys.stderr)
         ts = (self.i + np.arange(frames)) / self.sample_rate
-        ts = ts.reshape(-1, 1)  # (512, 1)  # TODO: Support multiple channels.
-        outdata[:] = self.output_generator(ts)
+        # all sources, filters etc now take a tuple of (ts, input_values) and produce (ts, output_values)
+        outdata[:] = self.output_generator((ts, None))[1] # None because generator ignores input_values
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
-    def up(self):
-        self.frequency += 10
-
-    def down(self):
-        self.frequency -= 10
 
 
 _COMMANDS = {
@@ -167,7 +157,7 @@ def start_app():
 def start_sound(*, device, amplitude, frequency):
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
     #print(sd.query_devices(device, 'output'))
-    sin = MakeSin(sample_rate, amplitude, frequency)
+    sin = MakeSignal(sample_rate)
 
     with sd.OutputStream(
             device=device, channels=1, callback=sin.callback, samplerate=sample_rate, blocksize=512):
@@ -182,9 +172,9 @@ def start_sound(*, device, amplitude, frequency):
                 continue
 
             if command == "u":
-                sin.up()
+                pass
             elif command == "d":
-                sin.down()
+                pass
             else:
                 print("Warning, unknown command:", command)
 
