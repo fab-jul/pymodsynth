@@ -47,10 +47,12 @@ def saw_tooth(t, duration=1):
   - keep in mind that parameters will also become signals!
 
 
+
 param = Parameter.key()
 param = Parameter.signal(signal)
 
 generator(param)
 
-
-
+## Considerations
+- some modules have inner state (modulator has its own clock to create a sine). these need to know the ts created by the callback. 
+-> pass [ts] as the first channel[0], and have signal_out / signal_in in channel[1]

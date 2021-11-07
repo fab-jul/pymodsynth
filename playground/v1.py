@@ -77,11 +77,12 @@ class LowPassFilter:
 
 class ModulateFilter:
 
-    def __init__(self, freq=400):
-        self.sin = SineSource(0.2, freq)
+    def __init__(self, freq=0.0033):
+        self.sin = SineSource(1.0, freq)
 
     def __call__(self, signal):
-        return signal * self.sin(np.arange(512) )
+        o = signal[:, 0] * self.sin(np.arange(512)) # hack, because this modulator has no persistent inner clock
+        return np.reshape(o, (512,1))
 
 
 class OutputGeneratorV1:
@@ -89,7 +90,8 @@ class OutputGeneratorV1:
     def __init__(self, src):
         self.src = src
         self.lowpass = LowPassFilter()
+        self.modulator = ModulateFilter()
 
     def __call__(self, ts: Signal) -> Signal:
-        return self.lowpass(self.src(ts))
+        return self.lowpass(self.modulator(self.src(ts)))
 
