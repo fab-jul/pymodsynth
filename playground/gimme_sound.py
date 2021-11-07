@@ -2,28 +2,33 @@
 """Play a sine signal.
 
 You need sounddevice==0.4.3, which needs portaudio, seems tough on Windows, see doc:
-
 https://python-sounddevice.readthedocs.io/en/0.4.3/installation.html
+
+Also need moderngl and moderngl_window
+https://github.com/moderngl/moderngl-window
 """
 
 import argparse
 import queue
+import select
 import sys
 import threading
+import time
 
+import moderngl_window
 import numpy as np
 import sounddevice as sd
 
+import live_graph_modern_gl
 
+
+# Contains input commands.
 _COMMAND_QUEUE = queue.Queue()
 
 
-def int_or_str(text):
-    """Helper function for argument parsing."""
-    try:
-        return int(text)
-    except ValueError:
-        return text
+# Used to signal need to stop program.
+_QUIT_EVENT = threading.Event()
+
 
 
 class MakeSin:
@@ -39,6 +44,7 @@ class MakeSin:
         t = (self.i + np.arange(frames)) / self.sample_rate
         t = t.reshape(-1, 1)
         outdata[:] = self.amplitude * np.sin(2 * np.pi * self.frequency * t)
+        live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
     def up(self):
@@ -49,7 +55,7 @@ class MakeSin:
 
 
 _COMMANDS = {
-    "help": "Show help",
+    "h": "Show help",
     "q": "Quit",
     "u": "Increase frequency",
     "d": "Decrease frequency",
@@ -63,28 +69,71 @@ def _print_help():
 
 
 def gimme_sound(device, amplitude, frequency):
-    t = threading.Thread(target=start_sound, kwargs=dict(
-        device=device, amplitude=amplitude, frequency=frequency))
+    # We start sound and input fetchers in background threads,
+    # and the app in the main thread. We use _QUIT_EVENT to signal others
+    # if one of them wants to quit (i.e., when the window is closed,
+    # or when `q` is typed in the console).
+    threading.Thread(target=start_sound, kwargs=dict(
+        device=device, amplitude=amplitude, frequency=frequency)).start()
+    t = threading.Thread(target=start_input_fetcher)
     t.start()
-    print("Started. Type `help` to get started")
+    start_app()  # This blocks until the app is closed.
+    t.join()  # If we land here, app is closed, so wait for this thread.
+
+
+def start_input_fetcher(timeout=1):
+    print("Started. Type `h` to get started")
+    time.sleep(3)
+    print_command = True
     while 1:
+        if _QUIT_EVENT.is_set():
+            print("Stopping input fetcher...")
+            break
         try:
-            print("Command:")
-            # This conveniently blocks this thread until input appears.
-            i = input()
-            if i not in _COMMANDS:
-                print(f"Invalid command: `{i}`. Type `help` for help.")
+            if print_command:
+                print("Command:")
+                print_command = False
+            # We cannot use input() here, as that blocks the thread, which would mean
+            # we would not get quit events. Instead, we rely on signals from stdin,
+            # but we should improve this implementation, as it now has a delay.
+            # TODO(fab-jul): Should rewrite this to be a keyhandler.
+            i_signal, _, _ = select.select([sys.stdin], [], [], timeout)
+            if not i_signal:  # No input on this cycle, move on...
                 continue
-            if i == "help":
+            i = sys.stdin.readline().strip()
+
+            if i not in _COMMANDS:
+                print(f"Invalid command: `{i}`. Type `h` for help.")
+                continue
+
+            print_command = True
+
+            if i == "h":
                 _print_help()
                 continue
-            _COMMAND_QUEUE.put(i, block=False)
             if i == "q":
+                print("Sending quit event...")
+                _QUIT_EVENT.set()
                 break
+            _COMMAND_QUEUE.put(i, block=False)
         except KeyboardInterrupt:
-            _COMMAND_QUEUE.put("q")
+            _QUIT_EVENT.set()
             break
-    sys.exit()
+
+
+def start_app():
+    live_graph_modern_gl.RandomPlot.QUIT_EVENT = _QUIT_EVENT
+    try:
+        timer = moderngl_window.Timer()
+        moderngl_window.run_window_config(
+            live_graph_modern_gl.RandomPlot, timer=timer)
+    except live_graph_modern_gl.QuitException:
+        # Raised when the window catches the quit event.
+        pass
+    except KeyboardInterrupt:
+        pass
+    _QUIT_EVENT.set()
+    print("Window did close.")
 
 
 def start_sound(*, device, amplitude, frequency):
@@ -94,15 +143,28 @@ def start_sound(*, device, amplitude, frequency):
     with sd.OutputStream(
             device=device, channels=1, callback=sin.callback, samplerate=sample_rate):
         while 1:
-            command = _COMMAND_QUEUE.get(block=True)
-            if command == "q":
+            if _QUIT_EVENT.is_set():
                 break
+
+            try:
+                command = _COMMAND_QUEUE.get(block=False)
+            except queue.Empty:
+                time.sleep(1)
+                continue
+
             if command == "u":
                 sin.up()
             elif command == "d":
                 sin.down()
             else:
                 print("Warning, unknown command:", command)
+
+
+def _int_or_str(text):
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 
 def main():
@@ -123,7 +185,7 @@ def main():
         'frequency', nargs='?', metavar='FREQUENCY', type=float, default=500,
         help='frequency in Hz (default: %(default)s)')
     parser.add_argument(
-        '-d', '--device', type=int_or_str,
+        '-d', '--device', type=_int_or_str,
         help='output device (numeric ID or substring)')
     parser.add_argument(
         '-a', '--amplitude', type=float, default=0.2,
