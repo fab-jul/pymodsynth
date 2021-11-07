@@ -98,6 +98,8 @@ def gimme_sound(device, amplitude, frequency):
     # and the app in the main thread. We use _QUIT_EVENT to signal others
     # if one of them wants to quit (i.e., when the window is closed,
     # or when `q` is typed in the console).
+    if device is None:
+        device = 3
     threading.Thread(target=start_sound, kwargs=dict(
         device=device, amplitude=amplitude, frequency=frequency)).start()
     t = threading.Thread(target=start_input_fetcher)
@@ -164,10 +166,11 @@ def start_app():
 
 def start_sound(*, device, amplitude, frequency):
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
+    #print(sd.query_devices(device, 'output'))
     sin = MakeSin(sample_rate, amplitude, frequency)
 
     with sd.OutputStream(
-            device=device, channels=1, callback=sin.callback, samplerate=sample_rate):
+            device=device, channels=1, callback=sin.callback, samplerate=sample_rate, blocksize=512):
         while 1:
             if _QUIT_EVENT.is_set():
                 break
