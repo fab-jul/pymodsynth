@@ -37,3 +37,19 @@ def saw_tooth(t, duration=1):
 ## Links
 
 - [pyo](http://ajaxsoundstudio.com/software/pyo/) for audio?
+
+
+## Next Steps
+
+- hot reloading of `make_out` @fabian
+- reactive parameter wiring @fabian
+  - keep in mind that parameters will also become signals!
+
+
+param = Parameter.key()
+param = Parameter.signal(signal)
+
+generator(param)
+
+
+

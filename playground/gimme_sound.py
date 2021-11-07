@@ -14,6 +14,7 @@ import select
 import sys
 import threading
 import time
+import v1
 
 import moderngl_window
 import numpy as np
@@ -31,13 +32,19 @@ _QUIT_EVENT = threading.Event()
 
 
 class MakeSin:
+
     def __init__(self, sample_rate, amplitude, frequency):
         self.sample_rate = sample_rate
         self.amplitude = amplitude
         self.frequency = frequency
         self.i = 0
+        self.last_t = time.time()
 
-    def callback(self, outdata, frames, timestamps, status):
+        self.output_generator = v1.OutputGeneratorV1(
+            #src=v1.SineSource(amplitude, frequency))
+            src=v1.SawSource(amplitude, frequency))
+
+    def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
 
         Properties of `timestamps`, from the docs:
@@ -54,11 +61,14 @@ class MakeSin:
             Can raise `CallbackStop()` to finish the stream.
         """
         t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
+        delta = t - self.last_t
+        self.last_t = t
+        #print(delta)
         if status:
             print(status, file=sys.stderr)
-        t = (self.i + np.arange(frames)) / self.sample_rate
-        t = t.reshape(-1, 1)
-        outdata[:] = self.amplitude * np.sin(2 * np.pi * self.frequency * t)
+        ts = (self.i + np.arange(frames)) / self.sample_rate
+        ts = ts.reshape(-1, 1)  # (512, 1)  # TODO: Support multiple channels.
+        outdata[:] = self.output_generator(ts)
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
@@ -165,7 +175,7 @@ def start_sound(*, device, amplitude, frequency):
             try:
                 command = _COMMAND_QUEUE.get(block=False)
             except queue.Empty:
-                time.sleep(1)
+                time.sleep(0.01)
                 continue
 
             if command == "u":
@@ -198,13 +208,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[parser])
     parser.add_argument(
-        'frequency', nargs='?', metavar='FREQUENCY', type=float, default=500,
+        'frequency', nargs='?', metavar='FREQUENCY', type=float, default=240,
         help='frequency in Hz (default: %(default)s)')
     parser.add_argument(
         '-d', '--device', type=_int_or_str,
         help='output device (numeric ID or substring)')
     parser.add_argument(
-        '-a', '--amplitude', type=float, default=0.2,
+        '-a', '--amplitude', type=float, default=0.4,
         help='amplitude (default: %(default)s)')
     args = parser.parse_args(remaining)
 

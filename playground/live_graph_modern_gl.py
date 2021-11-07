@@ -12,11 +12,13 @@ NUM_SAMPLES = 512
 # NOTE: the 1 is because we have a one channel output.
 SIGNAL = np.zeros((512, 1), np.float32)
 
+DATA_SAMPLES = 2 * NUM_SAMPLES
+
 # Static vectors needed to draw signal.
-_X = np.linspace(-1.0, 1.0, NUM_SAMPLES)
-_R = np.ones(NUM_SAMPLES)
-_G = np.zeros(NUM_SAMPLES)
-_B = np.zeros(NUM_SAMPLES)
+_X = np.linspace(-1.0, 1.0, DATA_SAMPLES)
+_R = np.ones(DATA_SAMPLES)
+_G = 1/DATA_SAMPLES * np.arange(DATA_SAMPLES)
+_B = 1 - (1/DATA_SAMPLES * np.arange(DATA_SAMPLES))
 
 
 class QuitException(Exception):
@@ -28,6 +30,7 @@ class RandomPlot(mglw.WindowConfig):
     gl_version = (3, 3)
 
     QUIT_EVENT: threading.Event = None
+    CACHE = None
 
     def render(self, time, frametime):
         if self.QUIT_EVENT and self.QUIT_EVENT.is_set():
@@ -61,7 +64,10 @@ class RandomPlot(mglw.WindowConfig):
             ''',
         )
 
-        vertices = np.dstack([_X, SIGNAL[:, 0], _R, _G, _B])
+        signal = SIGNAL[:, 0]
+        signal = np.stack((signal + 0.1, signal - 0.1), axis=-1)
+        signal = signal.flatten()
+        vertices = np.dstack([_X, signal, _R, _G, _B])
         vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
         vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
-        vao.render(moderngl.LINE_STRIP)
+        vao.render(moderngl.TRIANGLE_STRIP)
