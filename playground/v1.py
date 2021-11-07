@@ -43,7 +43,7 @@ class SawSource:
     def __call__(self, ts: Signal) -> Signal:
         period = 2 * np.pi * self.frequency / 200000
         o = (((ts % period) / (period / 2)) - 1) * self.amplitude
-        print(np.min(o), np.max(o))
+        #print(np.min(o), np.max(o))
         return o
 
 
@@ -94,4 +94,5 @@ class OutputGeneratorV1:
 
     def __call__(self, ts: Signal) -> Signal:
         return self.lowpass(self.modulator(self.src(ts)))
+
 

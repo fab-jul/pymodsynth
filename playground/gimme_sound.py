@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import v1
+import hot_reloader
 
 import moderngl_window
 import numpy as np
@@ -31,18 +32,28 @@ _COMMAND_QUEUE = queue.Queue()
 _QUIT_EVENT = threading.Event()
 
 
+PRG_SIN = """
+sin = SignalGenerator()
+o = sin(clock)
+"""
+
 class MakeSin:
 
-    def __init__(self, sample_rate, amplitude, frequency):
+    def __init__(self, sample_rate, block_size, amplitude, frequency):
         self.sample_rate = sample_rate
+        # Time between `callback` calls.
+        self.delta = 1 / (sample_rate / block_size)
         self.amplitude = amplitude
         self.frequency = frequency
         self.i = 0
         self.last_t = time.time()
+        self.t0 = -1
 
-        self.output_generator = v1.OutputGeneratorV1(
-            #src=v1.SineSource(amplitude, frequency))
-            src=v1.SawSource(amplitude, frequency))
+#        self.output_generator = v1.OutputGeneratorV1(
+#            #src=v1.SineSource(amplitude, frequency))
+#            src=v1.SawSource(amplitude, frequency))
+
+        self.output_generator = hot_reloader.parse(PRG_SIN)
 
     def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
@@ -60,13 +71,13 @@ class MakeSin:
         More notes:
             Can raise `CallbackStop()` to finish the stream.
         """
-        t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
-        delta = t - self.last_t
-        self.last_t = t
-        #print(delta)
         if status:
             print(status, file=sys.stderr)
-        ts = (self.i + np.arange(frames)) / self.sample_rate
+
+        t = timestamps.outputBufferDacTime
+        clock = (t / self.delta) * frames
+        print("Clock error =", round(clock - self.i))
+        ts = (clock + np.arange(frames)) / self.sample_rate
         ts = ts.reshape(-1, 1)  # (512, 1)  # TODO: Support multiple channels.
         outdata[:] = self.output_generator(ts)
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
@@ -98,8 +109,6 @@ def gimme_sound(device, amplitude, frequency):
     # and the app in the main thread. We use _QUIT_EVENT to signal others
     # if one of them wants to quit (i.e., when the window is closed,
     # or when `q` is typed in the console).
-    if device is None:
-        device = 3
     threading.Thread(target=start_sound, kwargs=dict(
         device=device, amplitude=amplitude, frequency=frequency)).start()
     t = threading.Thread(target=start_input_fetcher)
@@ -165,12 +174,16 @@ def start_app():
 
 
 def start_sound(*, device, amplitude, frequency):
+    if device is None:
+        #TODOdevice = 3
+        pass
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
-    #print(sd.query_devices(device, 'output'))
-    sin = MakeSin(sample_rate, amplitude, frequency)
+    block_size = 512
+    sin = MakeSin(sample_rate, block_size, amplitude, frequency)
 
     with sd.OutputStream(
-            device=device, channels=1, callback=sin.callback, samplerate=sample_rate, blocksize=512):
+            device=device, blocksize=block_size,
+            channels=1, callback=sin.callback, samplerate=sample_rate):
         while 1:
             if _QUIT_EVENT.is_set():
                 break
