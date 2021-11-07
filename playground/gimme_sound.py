@@ -30,7 +30,6 @@ _COMMAND_QUEUE = queue.Queue()
 _QUIT_EVENT = threading.Event()
 
 
-
 class MakeSin:
     def __init__(self, sample_rate, amplitude, frequency):
         self.sample_rate = sample_rate
@@ -38,7 +37,23 @@ class MakeSin:
         self.frequency = frequency
         self.i = 0
 
-    def callback(self, outdata, frames, time, status):
+    def callback(self, outdata, frames, timestamps, status):
+        """Callback.
+
+        Properties of `timestamps`, from the docs:
+            timestamps.inputBufferAdcTime:
+                ADC capture time of the first sample in the input buffer
+            timestamps.outputBufferDacTime:
+                DAC output time of the first sample in the output buffer
+            timestamps.currentTime:
+                and the time the callback was invoked.
+
+            All are synchronized with time.time().
+
+        More notes:
+            Can raise `CallbackStop()` to finish the stream.
+        """
+        t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
         if status:
             print(status, file=sys.stderr)
         t = (self.i + np.arange(frames)) / self.sample_rate

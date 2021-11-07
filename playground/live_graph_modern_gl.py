@@ -9,6 +9,7 @@ import numpy as np
 
 NUM_SAMPLES = 512
 # Shared among threads. Overwrite to update view.
+# NOTE: the 1 is because we have a one channel output.
 SIGNAL = np.zeros((512, 1), np.float32)
 
 # Static vectors needed to draw signal.
