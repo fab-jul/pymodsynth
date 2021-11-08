@@ -81,7 +81,7 @@ class SawSource(Module):
         return out
 
 
-class Modulator(Module):
+class SineModulator(Module):
     def __init__(self, inp: Module, carrier_frequency: Module):
         self.carrier = SineSource(carrier_frequency, amplitude=Parameter(1.0))
         self.inp = inp
@@ -115,16 +115,47 @@ class SimpleLowPass(Module):
         return out
 
 
+class Lift(Module):
+    """Lifts a signal from [-1,1] to [0,1]"""
+    def __init__(self, inp: Module):
+        self.inp = inp
+
+    def out(self, ts):
+        res = self.inp(ts)
+        return res / 2 + 0.5
+
+
+class ScalarMultiplier(Module):
+    def __init__(self, inp: Module, value: float):
+        self.inp = inp
+        self.value = value
+
+    def __call__(self, ts):
+        return self.inp(ts) * self.value
+
+
+class Multiplier(Module):
+    def __init__(self, inp1: Module, inp2: Module):
+        self.inp1 = inp1
+        self.inp2 = inp2
+        self.out = lambda ts: self.inp1(ts) * self.inp2(ts)
+
 
 ############################################
 # ======== Test composite modules ======== #
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
-        self.src = SawSource(Parameter(220))
-        self.modulator = Modulator(self.src, SineSource(Parameter(300)))
+        self.lfo = SineSource(Parameter(1))
+        self.src = SineSource(Parameter(220))
+        self.changingsine0 = Multiplier(self.src, self.lfo)
+        self.changingsine1 = SineModulator(self.src, Parameter(1))
+        # above 2 should be equal
+
+        #self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
+        self.modulator = SineModulator(self.src, Parameter(10))
         self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
-        self.out = self.lp
+        self.out = self.changingsine0
 
 
 
