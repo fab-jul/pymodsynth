@@ -82,8 +82,8 @@ class SawSource(Module):
 
 
 class SineModulator(Module):
-    def __init__(self, inp: Module, carrier_frequency: Module):
-        self.carrier = SineSource(carrier_frequency, amplitude=Parameter(1.0))
+    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
+        self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
     def out(self, ts):
@@ -128,6 +128,7 @@ class Lift(Module):
 class ScalarMultiplier(Module):
     """Needed for inner generators, so that we can have a changing frequency that is, e.g., not just between [0,1] but
     between [0,440]"""
+    # we could still pass a module as the value, instead of a constant float..
     def __init__(self, inp: Module, value: float):
         self.inp = inp
         self.value = value

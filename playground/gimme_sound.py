@@ -14,7 +14,6 @@ import select
 import sys
 import threading
 import time
-import v1
 import hot_reloader
 
 import moderngl_window
@@ -69,7 +68,6 @@ class MakeSignal:
             print(status, file=sys.stderr)
         ts = (self.i + np.arange(frames)) / self.sample_rate
         outdata[:] = self.output_gen(ts).reshape(-1,1)
-        print("ts", ts)
 
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
@@ -161,10 +159,10 @@ def start_app():
 
 def start_sound(*, device, amplitude, frequency):
     if device is None:
-        #TODOdevice = 3
-        pass
+        device = 3
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
     #print(sd.query_devices(device, 'output'))
+    block_size = 512
     sin = MakeSignal(sample_rate)
 
     with sd.OutputStream(

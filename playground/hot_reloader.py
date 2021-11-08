@@ -54,7 +54,7 @@ def program():
     o = m1(sin, carrier=carrier_freq)
 """
 
-programm()
+#programm()
 
 def test():
     cmd = "r"
