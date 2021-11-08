@@ -65,6 +65,18 @@ class RandomPlot(mglw.WindowConfig):
         )
 
         signal = SIGNAL[:, 0]
+
+        # mwe
+        FFT = True
+        if FFT:
+
+            fft = np.fft.fft(signal, n=signal.shape[0])
+            fft.resize((512,))
+            #print("fft", fft.shape)
+            fft_abs = np.abs(fft)
+            signal = fft_abs
+        #
+
         signal = np.stack((signal + 0.1, signal - 0.1), axis=-1)
         signal = signal.flatten()
         vertices = np.dstack([_X, signal, _R, _G, _B])

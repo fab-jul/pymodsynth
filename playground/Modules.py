@@ -137,7 +137,7 @@ class ScalarMultiplier(Module):
         return self.inp(ts) * self.value
 
 
-class Multiplier(Module):
+class Multiplier(Module): # TODO: variadic input
     def __init__(self, inp1: Module, inp2: Module):
         self.inp1 = inp1
         self.inp2 = inp2
@@ -166,15 +166,17 @@ class ClickSource(Module):
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.src = SineSource(Parameter(220))
+        self.src = SawSource(Parameter(220))
         self.changingsine0 = Multiplier(self.src, self.lfo)
-        self.changingsine1 = SineModulator(self.src, Parameter(1))
+        #self.changingsine1 = SineModulator(self.src, Parameter(1))
         # above 2 should be equal
+        self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
+
 
         #self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
         self.modulator = SineModulator(self.src, Parameter(10))
         self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
-        self.out = self.changingsine0
+        self.out = self.lowpass
 
 
 
