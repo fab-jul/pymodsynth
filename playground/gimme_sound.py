@@ -30,6 +30,7 @@ _COMMAND_QUEUE = queue.Queue()
 # Used to signal need to stop program.
 _QUIT_EVENT = threading.Event()
 
+import Modules
 
 class MakeSignal:
 
@@ -38,7 +39,8 @@ class MakeSignal:
         self.i = 0
         self.last_t = time.time()
 
-        self.output_generator = v1.OutputGeneratorV1()
+        #self.output_generator = v1.OutputGeneratorV1()
+        self.output_gen = Modules.BabiesFirstSynthie()
 
     def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
@@ -62,8 +64,7 @@ class MakeSignal:
         if status:
             print(status, file=sys.stderr)
         ts = (self.i + np.arange(frames)) / self.sample_rate
-        # all sources, filters etc now take a tuple of (ts, input_values) and produce (ts, output_values)
-        outdata[:] = self.output_generator((ts, None))[1] # None because generator ignores input_values
+        outdata[:] = self.output_gen(ts).reshape(-1,1)
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
