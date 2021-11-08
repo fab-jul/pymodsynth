@@ -38,6 +38,7 @@ class SawSource:
         return ts, o.reshape(-1,1)
 
 
+
 class SineSource:
 
     def __init__(self, amplitude_signal, frequency_signal):
@@ -99,4 +100,5 @@ class OutputGeneratorV1:
 
     def __call__(self, inp: Signal) -> Signal:
         return self.src(inp)
+
 

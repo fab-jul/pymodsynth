@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import v1
+import hot_reloader
 
 import moderngl_window
 import numpy as np
@@ -38,9 +39,12 @@ class MakeSignal:
         self.sample_rate = sample_rate
         self.i = 0
         self.last_t = time.time()
+        self.t0 = -1
 
         #self.output_generator = v1.OutputGeneratorV1()
         self.output_gen = Modules.BabiesFirstSynthie()
+
+        #self.output_generator = hot_reloader.parse(PRG_SIN)
 
     def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
@@ -66,6 +70,7 @@ class MakeSignal:
         ts = (self.i + np.arange(frames)) / self.sample_rate
         outdata[:] = self.output_gen(ts).reshape(-1,1)
         print("ts", ts)
+
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
@@ -90,8 +95,6 @@ def gimme_sound(device, amplitude, frequency):
     # and the app in the main thread. We use _QUIT_EVENT to signal others
     # if one of them wants to quit (i.e., when the window is closed,
     # or when `q` is typed in the console).
-    if device is None:
-        device = 3
     threading.Thread(target=start_sound, kwargs=dict(
         device=device, amplitude=amplitude, frequency=frequency)).start()
     t = threading.Thread(target=start_input_fetcher)
@@ -157,12 +160,16 @@ def start_app():
 
 
 def start_sound(*, device, amplitude, frequency):
+    if device is None:
+        #TODOdevice = 3
+        pass
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
     #print(sd.query_devices(device, 'output'))
     sin = MakeSignal(sample_rate)
 
     with sd.OutputStream(
-            device=device, channels=1, callback=sin.callback, samplerate=sample_rate, blocksize=512):
+            device=device, blocksize=block_size,
+            channels=1, callback=sin.callback, samplerate=sample_rate):
         while 1:
             if _QUIT_EVENT.is_set():
                 break
