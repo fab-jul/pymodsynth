@@ -65,6 +65,7 @@ class MakeSignal:
             print(status, file=sys.stderr)
         ts = (self.i + np.arange(frames)) / self.sample_rate
         outdata[:] = self.output_gen(ts).reshape(-1,1)
+        print("ts", ts)
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 

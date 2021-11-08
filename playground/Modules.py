@@ -126,6 +126,8 @@ class Lift(Module):
 
 
 class ScalarMultiplier(Module):
+    """Needed for inner generators, so that we can have a changing frequency that is, e.g., not just between [0,1] but
+    between [0,440]"""
     def __init__(self, inp: Module, value: float):
         self.inp = inp
         self.value = value
@@ -139,6 +141,22 @@ class Multiplier(Module):
         self.inp1 = inp1
         self.inp2 = inp2
         self.out = lambda ts: self.inp1(ts) * self.inp2(ts)
+
+
+class ClickSource(Module):
+    """
+    Creates a click track [...,0,1,0,...]
+    One 1 per num_samples
+    """
+    def __init__(self, num_samples):
+        self.num_samples = num_samples
+        self.counter = 0
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        out = np.zeros(SHAPE)
+        for i in range(self.counter, ...):
+            pass # WIP
+
 
 
 ############################################
