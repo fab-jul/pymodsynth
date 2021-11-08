@@ -56,3 +56,20 @@ generator(param)
 ## Considerations
 - some modules have inner state (modulator has its own clock to create a sine). these need to know the ts created by the callback. 
 -> pass [ts] as the first channel[0], and have signal_out / signal_in in channel[1]
+
+
+- callback:
+create ts :: [sampling_time]
+
+generator :: (sampling_times, _) -> (sampling_times, signal_values)
+
+filter :: (sampling_times, input_values) -> (sampling_times, output_values)
+
+but how to pass changing parameters? every timestep there could be new params... but different filters have different numbers of parameters... so channels are not the way
+-> this is also solved by having access to ts, because paramset can be sampled with ts. 
+
+
+
+
+
+

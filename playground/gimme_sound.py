@@ -31,29 +31,20 @@ _COMMAND_QUEUE = queue.Queue()
 # Used to signal need to stop program.
 _QUIT_EVENT = threading.Event()
 
+import Modules
 
-PRG_SIN = """
-sin = SignalGenerator()
-o = sin(clock)
-"""
+class MakeSignal:
 
-class MakeSin:
-
-    def __init__(self, sample_rate, block_size, amplitude, frequency):
+    def __init__(self, sample_rate):
         self.sample_rate = sample_rate
-        # Time between `callback` calls.
-        self.delta = 1 / (sample_rate / block_size)
-        self.amplitude = amplitude
-        self.frequency = frequency
         self.i = 0
         self.last_t = time.time()
         self.t0 = -1
 
-#        self.output_generator = v1.OutputGeneratorV1(
-#            #src=v1.SineSource(amplitude, frequency))
-#            src=v1.SawSource(amplitude, frequency))
+        #self.output_generator = v1.OutputGeneratorV1()
+        self.output_gen = Modules.BabiesFirstSynthie()
 
-        self.output_generator = hot_reloader.parse(PRG_SIN)
+        #self.output_generator = hot_reloader.parse(PRG_SIN)
 
     def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
         """Callback.
@@ -71,23 +62,18 @@ class MakeSin:
         More notes:
             Can raise `CallbackStop()` to finish the stream.
         """
+        t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
+        delta = t - self.last_t
+        self.last_t = t
         if status:
             print(status, file=sys.stderr)
+        ts = (self.i + np.arange(frames)) / self.sample_rate
+        outdata[:] = self.output_gen(ts).reshape(-1,1)
+        print("ts", ts)
 
-        t = timestamps.outputBufferDacTime
-        clock = (t / self.delta) * frames
-        print("Clock error =", round(clock - self.i))
-        ts = (clock + np.arange(frames)) / self.sample_rate
-        ts = ts.reshape(-1, 1)  # (512, 1)  # TODO: Support multiple channels.
-        outdata[:] = self.output_generator(ts)
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += frames
 
-    def up(self):
-        self.frequency += 10
-
-    def down(self):
-        self.frequency -= 10
 
 
 _COMMANDS = {
@@ -178,8 +164,8 @@ def start_sound(*, device, amplitude, frequency):
         #TODOdevice = 3
         pass
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
-    block_size = 512
-    sin = MakeSin(sample_rate, block_size, amplitude, frequency)
+    #print(sd.query_devices(device, 'output'))
+    sin = MakeSignal(sample_rate)
 
     with sd.OutputStream(
             device=device, blocksize=block_size,
@@ -195,9 +181,9 @@ def start_sound(*, device, amplitude, frequency):
                 continue
 
             if command == "u":
-                sin.up()
+                pass
             elif command == "d":
-                sin.down()
+                pass
             else:
                 print("Warning, unknown command:", command)
 
