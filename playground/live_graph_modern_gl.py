@@ -25,8 +25,8 @@ _G = 1/DATA_SAMPLES * np.arange(DATA_SAMPLES)
 _B = 1 - (1/DATA_SAMPLES * np.arange(DATA_SAMPLES))
 
 
+# TODO: wire up properly.
 # ASCII version of keys we are interested.
-# Only *modified* by the sound thread!
 INTERESTING_KEYS = []
 
 
@@ -113,7 +113,7 @@ class RandomPlot(mglw.WindowConfig):
         signal = SIGNAL[:, 0]
 
         # mwe
-        FFT = False
+        FFT = True
         if FFT:
 
             fft = np.fft.fft(signal, n=signal.shape[0])
