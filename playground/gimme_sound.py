@@ -9,11 +9,15 @@ https://github.com/moderngl/moderngl-window
 """
 
 import argparse
+import collections
+import itertools
 import queue
 import select
 import sys
 import threading
 import time
+import typing
+
 import hot_reloader
 
 import moderngl_window
@@ -24,25 +28,37 @@ import live_graph_modern_gl
 import modules
 
 
-# Contains input commands.
-_COMMAND_QUEUE = queue.Queue()
+# Can contain:
+# - KeyAndMouseEvent
+EVENT_QUEUE = collections.deque(maxlen=100)
 
 
-# Used to signal need to stop program.
-_QUIT_EVENT = threading.Event()
+# TODO: This is work in progress.
+class ParamSpec(typing.NamedTuple):
+    param_name: str
+    step: float
+    # Limits of the parameter.
+    lo: float = float('-inf')
+    hi: float = float('inf')
 
 
 class MakeSignal:
 
-    def __init__(self, sample_rate, num_channels):
+    def __init__(self, output_gen: modules.Module, sample_rate, num_channels):
+        self.output_gen = output_gen
+        self.params = self.output_gen.find_params()
         self.sample_rate = sample_rate
         self.num_channels = num_channels
         self.i = 0
         self.last_t = time.time()
         self.t0 = -1
 
-        # TODO: Turn module name into a flag and dynamically load.
-        self.output_gen = modules.BabiesFirstSynthie()
+        self.mapping = {
+            "f": ParamSpec("lfo.frequency", 1/100, lo=1., hi=10.),
+            "s": ParamSpec("src.frequency", 1/10,  lo=10., hi=500.),
+            "w": ParamSpec("lowpass.window_size", 1, lo=1., hi=500.),
+        }
+        live_graph_modern_gl.INTERESTING_KEYS = [k for k in self.mapping.keys()]
 
     def callback(self, outdata: np.ndarray, num_samples: int, timestamps, status):
         """Callback.
@@ -70,123 +86,58 @@ class MakeSignal:
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
         assert ts.shape == (num_samples, self.num_channels)
         outdata[:] = self.output_gen(ts)
-
+        if EVENT_QUEUE:
+            s = time.time()
+            # Ingest all events.
+            while EVENT_QUEUE:
+                event: live_graph_modern_gl.KeyAndMouseEvent = EVENT_QUEUE.pop()
+                # Unpacking is supposedly faster than name access.
+                dx, dy, keys, shift_is_on = event
+                # The first key needs left/right movement ("x"),
+                # the second up/down ("y"). NOTE: we only support 2 keys.
+                for offset, k in zip((dx, dy), keys):
+                    param, multiplier, lo, hi = self.mapping[k]
+                    if shift_is_on:
+                        multiplier *= 10
+                    out = self.params[param].value + (offset * multiplier)
+                    self.params[param].value = np.clip(out, lo, hi)
+            duration = time.time() - s
+            if duration > 1e-4:
+                print("WARN: slow event ingestion!")
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += num_samples
 
 
-
-_COMMANDS = {
-    "h": "Show help",
-    "q": "Quit",
-    "u": "Increase frequency",
-    "d": "Decrease frequency",
-}
-
-
-def _print_help():
-    print("Commands:")
-    for q, info in _COMMANDS.items():
-        print(q, ":", info)
-
-
-def gimme_sound(device, amplitude, frequency):
-    # We start sound and input fetchers in background threads,
-    # and the app in the main thread. We use _QUIT_EVENT to signal others
-    # if one of them wants to quit (i.e., when the window is closed,
-    # or when `q` is typed in the console).
-    threading.Thread(target=start_sound, kwargs=dict(
-        device=device, amplitude=amplitude, frequency=frequency)).start()
-    t = threading.Thread(target=start_input_fetcher)
-    t.start()
-    start_app()  # This blocks until the app is closed.
-    t.join()  # If we land here, app is closed, so wait for this thread.
-
-
-def start_input_fetcher(timeout=1):
-    print("Started. Type `h` to get started")
-    time.sleep(3)
-    # Whether we should print the `Command:` prompt.
-    print_command = True
-    while 1:
-        if _QUIT_EVENT.is_set():
-            print("Stopping input fetcher...")
-            break
-        try:
-            if print_command:
-                print("Command:")
-                print_command = False
-            # We cannot use input() here, as that blocks the thread, which would mean
-            # we would not get quit events. Instead, we rely on signals from stdin,
-            # but we should improve this implementation, as it now has a delay.
-            # TODO(fab-jul): Should rewrite this to be a keyhandler.
-            i_signal, _, _ = select.select([sys.stdin], [], [], timeout)
-            if not i_signal:  # No input on this cycle, move on...
-                continue
-            i = sys.stdin.readline().strip()
-
-            if i not in _COMMANDS:
-                print(f"Invalid command: `{i}`. Type `h` for help.")
-                continue
-
-            print_command = True
-
-            if i == "h":
-                _print_help()
-                continue
-            if i == "q":
-                print("Sending quit event...")
-                _QUIT_EVENT.set()
-                break
-            _COMMAND_QUEUE.put(i, block=False)
-        except KeyboardInterrupt:
-            _QUIT_EVENT.set()
-            break
-
-
 def start_app():
-    live_graph_modern_gl.RandomPlot.QUIT_EVENT = _QUIT_EVENT
     try:
-        timer = moderngl_window.Timer()
-        moderngl_window.run_window_config(
-            live_graph_modern_gl.RandomPlot, timer=timer)
+        live_graph_modern_gl.run_window_config(
+            live_graph_modern_gl.RandomPlot, event_queue=EVENT_QUEUE)
     except live_graph_modern_gl.QuitException:
         # Raised when the window catches the quit event.
         pass
     except KeyboardInterrupt:
         pass
-    _QUIT_EVENT.set()
     print("Window did close.")
 
 
-def start_sound(*, device, amplitude, frequency):
+def start_sound(device):
+    # TODO: actually not working on mac.
     if device is None:
         device = 3
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
-    #print(sd.query_devices(device, 'output'))
+
+    # TODO: Turn module name into a flag and dynamically load.
+    output_gen = modules.BabiesFirstSynthie()
+
     block_size = 512
     channels = 1
-    sin = MakeSignal(sample_rate, num_channels=channels)
+    sin = MakeSignal(output_gen, sample_rate, num_channels=channels)
 
     with sd.OutputStream(
             device=device, blocksize=block_size,
+            latency="low",
             channels=channels, callback=sin.callback, samplerate=sample_rate):
-        while 1:
-            if _QUIT_EVENT.is_set():
-                break
-
-            try:
-                command = _COMMAND_QUEUE.get(block=False)
-            except queue.Empty:
-                time.sleep(0.01)
-                continue
-
-            if command == "u":
-                pass
-            elif command == "d":
-                pass
-            else:
-                print("Warning, unknown command:", command)
+        start_app()
 
 
 def _int_or_str(text):
@@ -211,22 +162,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[parser])
     parser.add_argument(
-        'frequency', nargs='?', metavar='FREQUENCY', type=float, default=240,
-        help='frequency in Hz (default: %(default)s)')
-    parser.add_argument(
         '-d', '--device', type=_int_or_str,
         help='output device (numeric ID or substring)')
-    parser.add_argument(
-        '-a', '--amplitude', type=float, default=0.4,
-        help='amplitude (default: %(default)s)')
     args = parser.parse_args(remaining)
 
-    # Needed because for some reason, modernGL tries to parse flags... ???
-    sys.argv[:] = sys.argv[:1]
-
-    gimme_sound(args.device, amplitude=args.amplitude, frequency=args.frequency)
+    start_sound(args.device)
 
 
 if __name__ == "__main__":
-    print("MAIN?")
     main()

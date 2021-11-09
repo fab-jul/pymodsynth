@@ -145,7 +145,9 @@ class Multiplier(Module): # TODO: variadic input
     def __init__(self, inp1: Module, inp2: Module):
         self.inp1 = inp1
         self.inp2 = inp2
-        self.out = lambda ts: self.inp1(ts) * self.inp2(ts)
+
+    def out(self, ts):
+        return self.inp1(ts) * self.inp2(ts)
 
 
 class ClickSource(Module):
@@ -163,14 +165,14 @@ class ClickSource(Module):
             pass # WIP
 
 
-
 ############################################
 # ======== Test composite modules ======== #
+
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.src = SawSource(Parameter(220))
+        self.src = SawSource(frequency=Parameter(220))
         self.changingsine0 = Multiplier(self.src, self.lfo)
         #self.changingsine1 = SineModulator(self.src, Parameter(1))
         # above 2 should be equal
