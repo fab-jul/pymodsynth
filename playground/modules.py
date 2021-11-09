@@ -3,10 +3,8 @@ import numpy as np
 import dataclasses
 
 import scipy
+import scipy.signal
 
-NUM_CHANNELS = 1
-BLOCKSIZE = 512
-SHAPE = (BLOCKSIZE, NUM_CHANNELS)
 
 class Module:
     """
@@ -38,9 +36,10 @@ class Module:
 class Constant(Module):
     def __init__(self, value):
         self.value = value
+
     def out(self, ts):
         # TODO: consider: output a scalar or a vector?
-        return np.repeat(self.value, ts.shape[0]).reshape(SHAPE)
+        return np.ones_like(ts) * self.value
 
 
 # for now,
@@ -57,8 +56,7 @@ class SineSource(Module):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
         phase = self.phase(ts)
-        out = amp * np.sin(2 * np.pi * freq * ts.reshape(SHAPE) + phase)
-        out = out.reshape(SHAPE)
+        out = amp * np.sin(2 * np.pi * freq * ts + phase)
         return out
 
 
@@ -71,13 +69,9 @@ class SawSource(Module):
     def out(self, ts):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
-        phase = self.phase(ts)
-        # now, we need ts reshaped so that it does not broadcast into channels
-        ts = ts.reshape(SHAPE)
+        phase = self.phase(ts)  # TODO: unused!
         period = 1 / freq
-        #return (((ts + phase) % period) / (period / 2) - 1) * amp
         out = 2 * (ts/period - np.floor(1/2 + ts/period)) * amp
-        out = out.reshape(SHAPE)
         return out
 
 
@@ -86,6 +80,7 @@ class SineModulator(Module):
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
+
     def out(self, ts):
         out = self.carrier(ts) * self.inp(ts)
         return out
@@ -93,26 +88,35 @@ class SineModulator(Module):
 
 class SimpleLowPass(Module):
     """Simplest lowpass: average over previous <window> values"""
-    def __init__(self, inp: Module, window_size):
-        self.window_size = window_size # module, not int
-        self.last_signal = np.zeros(SHAPE)
+    def __init__(self, inp: Module, window_size: Module):
+        self.window_size = window_size
+        self.last_signal = None
         self.inp = inp
 
     def out(self, ts):
-        # every step we could have a different window size. so I am using a for loop for now. TODO: pls advise
+        if self.last_signal is None:
+            self.last_signal = np.zeros_like(ts)
+        num_samples, num_channels = ts.shape
         input = self.inp(ts)
+        # Shape: (2*num_frames, num_channels)
         full_signal = np.concatenate((self.last_signal, input), axis=0)
-        full_len = full_signal.shape[0]
-        inp_len = input.shape[0]
         window_sizes = self.window_size(ts)
-        res = []
-        for i, ws in enumerate(window_sizes):
-            ws = ws[0]  # TODO: will cause problems when we have multiple channels
-            current_val = np.mean(full_signal[full_len-inp_len + i - ws:full_len-inp_len + i, :], axis=0)
-            res.append(current_val)
-        out = np.array(res).reshape(SHAPE)
+        # TODO: Now we have one window size per frame. Seems reasonable?
+        # Maybe we want to have a "MapsToSingleValueModule".
+        window_size: int = round(float(np.mean(window_sizes)))
+        mean_filter = np.ones((window_size,), dtype=ts.dtype)
+        result_per_channel = []
+        start_time_index = num_samples - window_size + 1
+        # Note that this for loop si over at most 2 elements!
+        for channel_i in range(num_channels):
+            result_per_channel.append(
+                # TODO: Check out `oaconvolve`?
+                scipy.signal.convolve(full_signal[start_time_index:, channel_i],
+                                      mean_filter, "valid"))
         self.last_signal = input
-        return out
+        output = np.stack(result_per_channel, axis=-1)  # Back to correct shape
+        assert output.shape == ts.shape, (output.shape, ts.shape, window_size, start_time_index)
+        return output
 
 
 class Lift(Module):
@@ -154,7 +158,7 @@ class ClickSource(Module):
         self.counter = 0
 
     def out(self, ts: np.ndarray) -> np.ndarray:
-        out = np.zeros(SHAPE)
+        out = np.zeros_like(ts)
         for i in range(self.counter, ...):
             pass # WIP
 
