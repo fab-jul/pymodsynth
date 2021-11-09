@@ -86,28 +86,24 @@ class MakeSignal:
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
         assert ts.shape == (num_samples, self.num_channels)
         outdata[:] = self.output_gen(ts)
-
         if EVENT_QUEUE:
             s = time.time()
-            n = len(EVENT_QUEUE)
             # Ingest all events.
             while EVENT_QUEUE:
                 event: live_graph_modern_gl.KeyAndMouseEvent = EVENT_QUEUE.pop()
+                # Unpacking is supposedly faster than name access.
+                dx, dy, keys, shift_is_on = event
                 # The first key needs left/right movement ("x"),
-                # the second up/down ("y").
-                for direction, k in zip(itertools.cycle("xy"),
-                                        event.keys):
+                # the second up/down ("y"). NOTE: we only support 2 keys.
+                for offset, k in zip((dx, dy), keys):
                     param, multiplier, lo, hi = self.mapping[k]
-                    if event.shift_is_on:
+                    if shift_is_on:
                         multiplier *= 10
-                    offset = event.dx if direction == "x" else event.dy
-                    print("KEY:", k, direction, "-> offset", offset * multiplier)
                     out = self.params[param].value + (offset * multiplier)
                     self.params[param].value = np.clip(out, lo, hi)
             duration = time.time() - s
-            if duration > 5e-4:
+            if duration > 1e-4:
                 print("WARN: slow event ingestion!")
-
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
         self.i += num_samples
 
