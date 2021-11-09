@@ -218,8 +218,12 @@ def main():
         help='amplitude (default: %(default)s)')
     args = parser.parse_args(remaining)
 
+    # Needed because for some reason, modernGL tries to parse flags... ???
+    sys.argv[:] = sys.argv[:1]
+
     gimme_sound(args.device, amplitude=args.amplitude, frequency=args.frequency)
 
 
 if __name__ == "__main__":
+    print("MAIN?")
     main()
