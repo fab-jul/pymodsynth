@@ -21,6 +21,7 @@ import numpy as np
 import sounddevice as sd
 
 import live_graph_modern_gl
+import modules
 
 
 # Contains input commands.
@@ -30,22 +31,20 @@ _COMMAND_QUEUE = queue.Queue()
 # Used to signal need to stop program.
 _QUIT_EVENT = threading.Event()
 
-import Modules
 
 class MakeSignal:
 
-    def __init__(self, sample_rate):
+    def __init__(self, sample_rate, num_channels):
         self.sample_rate = sample_rate
+        self.num_channels = num_channels
         self.i = 0
         self.last_t = time.time()
         self.t0 = -1
 
-        #self.output_generator = v1.OutputGeneratorV1()
-        self.output_gen = Modules.BabiesFirstSynthie()
+        # TODO: Turn a flag.
+        self.output_gen = modules.BabiesFirstSynthie()
 
-        #self.output_generator = hot_reloader.parse(PRG_SIN)
-
-    def callback(self, outdata: np.ndarray, frames: int, timestamps, status):
+    def callback(self, outdata: np.ndarray, num_samples: int, timestamps, status):
         """Callback.
 
         Properties of `timestamps`, from the docs:
@@ -66,11 +65,14 @@ class MakeSignal:
         self.last_t = t
         if status:
             print(status, file=sys.stderr)
-        ts = (self.i + np.arange(frames)) / self.sample_rate
-        outdata[:] = self.output_gen(ts).reshape(-1,1)
+        ts = (self.i + np.arange(num_samples)) / self.sample_rate
+        # Broadcast `ts` into (num_samples, num_channels)
+        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
+        assert ts.shape == (num_samples, self.num_channels)
+        outdata[:] = self.output_gen(ts)
 
         live_graph_modern_gl.SIGNAL[:] = outdata[:]
-        self.i += frames
+        self.i += num_samples
 
 
 
@@ -163,11 +165,12 @@ def start_sound(*, device, amplitude, frequency):
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
     #print(sd.query_devices(device, 'output'))
     block_size = 512
-    sin = MakeSignal(sample_rate)
+    channels = 1
+    sin = MakeSignal(sample_rate, num_channels=channels)
 
     with sd.OutputStream(
             device=device, blocksize=block_size,
-            channels=1, callback=sin.callback, samplerate=sample_rate):
+            channels=channels, callback=sin.callback, samplerate=sample_rate):
         while 1:
             if _QUIT_EVENT.is_set():
                 break
