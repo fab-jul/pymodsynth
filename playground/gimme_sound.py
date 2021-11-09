@@ -41,7 +41,7 @@ class MakeSignal:
         self.last_t = time.time()
         self.t0 = -1
 
-        # TODO: Turn a flag.
+        # TODO: Turn module name into a flag and dynamically load.
         self.output_gen = modules.BabiesFirstSynthie()
 
     def callback(self, outdata: np.ndarray, num_samples: int, timestamps, status):
