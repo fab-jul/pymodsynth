@@ -68,6 +68,9 @@ filter :: (sampling_times, input_values) -> (sampling_times, output_values)
 but how to pass changing parameters? every timestep there could be new params... but different filters have different numbers of parameters... so channels are not the way
 -> this is also solved by having access to ts, because paramset can be sampled with ts. 
 
+TODO:
+- ability to plug window into any output
+- visual knob/slider indicators which move when using mouse/kb to adjust parameters. should show hi/low/current
 
 
 

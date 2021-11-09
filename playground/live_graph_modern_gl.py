@@ -113,7 +113,7 @@ class RandomPlot(mglw.WindowConfig):
         signal = SIGNAL[:, 0]
 
         # mwe
-        FFT = True
+        FFT = False
         if FFT:
 
             fft = np.fft.fft(signal, n=signal.shape[0])

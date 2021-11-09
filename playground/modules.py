@@ -1,3 +1,4 @@
+from functools import reduce
 
 import numpy as np
 import dataclasses
@@ -165,6 +166,19 @@ class ClickSource(Module):
             pass # WIP
 
 
+class PlainMixer(Module):
+    """Adds all input signals without changing their amplitudes"""
+    def __init__(self, *args):
+        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
+
+
+class MultiScaler(Module):
+    """
+    Takes n input modules and n input amplitudes and produces n amplified output modules.
+    Combine with PlainMixer to create a Mixer.
+    """
+    pass #TODO
+
 ############################################
 # ======== Test composite modules ======== #
 
@@ -172,17 +186,24 @@ class ClickSource(Module):
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.src = SawSource(frequency=Parameter(220))
-        self.changingsine0 = Multiplier(self.src, self.lfo)
+        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
+        self.sin1 = SineSource(frequency=Parameter(440))
+        self.sin2 = SineSource(frequency=Parameter(220))
+
+
+        self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
+
+
+        #self.changingsine0 = Multiplier(self.src, self.lfo)
         #self.changingsine1 = SineModulator(self.src, Parameter(1))
         # above 2 should be equal
-        self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
-
+        #self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
 
         #self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
-        self.modulator = SineModulator(self.src, Parameter(10))
-        self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
-        self.out = self.lowpass
+        #self.modulator = SineModulator(self.src, Parameter(10))
+        #self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
+        #self.out = self.lowpass
+
 
 
 
