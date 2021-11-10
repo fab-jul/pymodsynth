@@ -7,6 +7,19 @@ import scipy
 import scipy.signal
 
 
+class Monitor:
+    def __init__(self):
+        self.data = np.zeros((1,1))
+        self.mod_name = "No name"
+
+    def write(self, data_in, mod_name):
+        self.data = data_in
+        self.mod_name = mod_name
+
+    def get_data(self):
+        return self.data
+
+
 class Module:
     """
     Module :: Signal -> Signal, in particular:
@@ -20,7 +33,16 @@ class Module:
         raise Exception("not implemented")
 
     def __call__(self, ts: np.ndarray) -> np.ndarray:
-        return self.out(ts)
+        out = self.out(ts)
+        if hasattr(self, "monitor") and self.monitor is not None:
+            self.monitor.write(out, self.__repr__())
+        return out
+
+    def attach_monitor(self, monitor: Monitor):
+        self.monitor = monitor
+
+    def detach_monitor(self):
+        self.monitor = None
 
     def find_params(self):
         parameters = {}
@@ -206,9 +228,9 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
 
-test_module(ClickSource(num_samples=Parameter(19)))
-test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
-test_module(SawSource(frequency=Parameter(440)))
+#test_module(ClickSource(num_samples=Parameter(19)))
+#test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
+#test_module(SawSource(frequency=Parameter(440)))
 
 
 class BabiesFirstSynthie(Module):

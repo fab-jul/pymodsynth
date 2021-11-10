@@ -45,6 +45,9 @@ class KeyAndMouseEvent(typing.NamedTuple):
     shift_is_on: bool
 
 
+class SwitchMonitorEvent:
+    pass
+
 class RandomPlot(mglw.WindowConfig):
     gl_version = (3, 3)
 
@@ -65,6 +68,10 @@ class RandomPlot(mglw.WindowConfig):
         self._event_queue = event_queue
 
     def key_event(self, key, action, modifiers):
+        if key == ord('m') and action == self.wnd.keys.ACTION_RELEASE:
+            print("m")
+            self._event_queue.append(SwitchMonitorEvent())
+
         if key not in self._interesting_keys:
             return
         # Key presses

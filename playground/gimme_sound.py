@@ -12,6 +12,7 @@ import argparse
 import collections
 import itertools
 import queue
+import random
 import select
 import sys
 import threading
@@ -52,6 +53,8 @@ class MakeSignal:
         self.i = 0
         self.last_t = time.time()
         self.t0 = -1
+        self.monitor = modules.Monitor()
+        self.output_gen.attach_monitor(self.monitor)
 
         self.mapping = {
             "f": ParamSpec("lfo.frequency", 1/100, lo=1., hi=10.),
@@ -90,21 +93,33 @@ class MakeSignal:
             s = time.time()
             # Ingest all events.
             while EVENT_QUEUE:
-                event: live_graph_modern_gl.KeyAndMouseEvent = EVENT_QUEUE.pop()
-                # Unpacking is supposedly faster than name access.
-                dx, dy, keys, shift_is_on = event
-                # The first key needs left/right movement ("x"),
-                # the second up/down ("y"). NOTE: we only support 2 keys.
-                for offset, k in zip((dx, dy), keys):
-                    param, multiplier, lo, hi = self.mapping[k]
-                    if shift_is_on:
-                        multiplier *= 10
-                    out = self.params[param].value + (offset * multiplier)
-                    self.params[param].value = np.clip(out, lo, hi)
+                event = EVENT_QUEUE.pop()
+                if type(event) == live_graph_modern_gl.KeyAndMouseEvent:
+                    #event: live_graph_modern_gl.KeyAndMouseEvent = EVENT_QUEUE.pop()
+                    # Unpacking is supposedly faster than name access.
+                    dx, dy, keys, shift_is_on = event
+                    # The first key needs left/right movement ("x"),
+                    # the second up/down ("y"). NOTE: we only support 2 keys.
+                    for offset, k in zip((dx, dy), keys):
+                        param, multiplier, lo, hi = self.mapping[k]
+                        if shift_is_on:
+                            multiplier *= 10
+                        out = self.params[param].value + (offset * multiplier)
+                        self.params[param].value = np.clip(out, lo, hi)
+                #
+                if type(event) == live_graph_modern_gl.SwitchMonitorEvent:
+                    #event2 = live_graph_modern_gl.SwitchMonitorEvent = EVENT_QUEUE.pop()
+                    self.output_gen.detach_monitor()
+                    self.output_gen.sin0.attach_monitor(self.monitor)
+                #
             duration = time.time() - s
             if duration > 1e-4:
                 print("WARN: slow event ingestion!")
-        live_graph_modern_gl.SIGNAL[:] = outdata[:]
+        #live_graph_modern_gl.SIGNAL[:] = outdata[:]
+        live_graph_modern_gl.SIGNAL[:] = self.monitor.get_data()
+        # if random.random() > 0.99:
+        #     self.output_gen.detach_monitor()
+        #     self.output_gen.sin0.attach_monitor(self.monitor)
         self.i += num_samples
 
 
