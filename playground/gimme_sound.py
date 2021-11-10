@@ -94,6 +94,7 @@ class MakeSignal:
         # Setup params to key_mapping stuff.
         self.params_file = f"params_{output_gen_class}.txt"
         if not os.path.isfile(self.params_file):
+            print(f"Creating {self.params_file}...")
             # Create initial dump.
             # TODO: have to update when generator function changes!
             param_specs = [params_lib.ParamSpec(name) for name in
@@ -106,6 +107,8 @@ class MakeSignal:
         Timer(fire_every=1,
               repeats=True,
               callback=self.update_keymapping_from_params_file).register()
+
+        self.time_of_last_timer_update = 0.0
 
     def update_keymapping_from_params_file(self):
         if not self.params_watcher.has_changes:
@@ -138,8 +141,11 @@ class MakeSignal:
         More notes:
             Can raise `CallbackStop()` to finish the stream.
         """
-        call_timers()
         t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
+        # For performance, only update timers at most 1 per second
+        if t - self.time_of_last_timer_update >= 1.:
+            call_timers()
+            self.time_of_last_timer_update = t
         delta = t - self.last_t
         self.last_t = t
         if status:
