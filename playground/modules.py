@@ -255,5 +255,9 @@ class BabiesFirstSynthie(Module):
         #self.out = self.lowpass
 
 
+class StepSequencing(Module):
+    def __init__(self):
+        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
+        self.out = self.sin0
 
 

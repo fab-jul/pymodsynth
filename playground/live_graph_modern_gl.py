@@ -25,9 +25,11 @@ _G = 1/DATA_SAMPLES * np.arange(DATA_SAMPLES)
 _B = 1 - (1/DATA_SAMPLES * np.arange(DATA_SAMPLES))
 
 
-# TODO: wire up properly.
-# ASCII version of keys we are interested.
-INTERESTING_KEYS = []
+_CURRENT_WINDOW = [None]
+
+
+def get_current_window() -> typing.Optional["RandomPlot"]:
+    return _CURRENT_WINDOW[0]
 
 
 class QuitException(Exception):
@@ -48,6 +50,7 @@ class KeyAndMouseEvent(typing.NamedTuple):
 class SwitchMonitorEvent:
     pass
 
+
 class RandomPlot(mglw.WindowConfig):
     gl_version = (3, 3)
 
@@ -60,12 +63,13 @@ class RandomPlot(mglw.WindowConfig):
         super().__init__(ctx=ctx, wnd=wnd, timer=timer)
 
         # Map BaseKey -> ASCII, e.g., {wnd.keys.A: "A"}
-        #self._interesting_keys = {}
-        self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k
-                                  for k in INTERESTING_KEYS}
+        self._interesting_keys = {}
         self._modifiers = {}
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
+
+    def set_interesting_keys(self, keys_as_ascii: typing.Iterable[str]):
+        self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k for k in keys_as_ascii}
 
     def key_event(self, key, action, modifiers):
         if key == ord('m') and action == self.wnd.keys.ACTION_RELEASE:
@@ -165,7 +169,9 @@ def run_window_config(config_cls: mglw.WindowConfig,
     window.print_context_info()
     mglw.activate_context(window=window)
     timer = mglw.Timer()
-    window.config = config_cls(ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue)
+    config_instance = config_cls(ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue)
+    window.config = config_instance
+    _CURRENT_WINDOW[0] = config_instance
 
     # Swap buffers once before staring the main loop.
     # This can trigged additional resize events reporting
