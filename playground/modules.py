@@ -156,14 +156,23 @@ class ClickSource(Module):
     Creates a click track [...,0,1,0,...]
     One 1 per num_samples
     """
-    def __init__(self, num_samples):
+    def __init__(self, num_samples: Module):
         self.num_samples = num_samples
         self.counter = 0
 
+
     def out(self, ts: np.ndarray) -> np.ndarray:
+        num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
         out = np.zeros_like(ts)
-        for i in range(self.counter, ...):
-            pass # WIP
+        print("counter", self.counter)
+        print("num 1ones:", int(np.ceil((ts.shape[0]-self.counter) / num_samples)))
+        for i in range(int(np.ceil((ts.shape[0]-self.counter) / num_samples))):
+            out[self.counter + i * num_samples, :] = 1
+        self.counter += num_samples - (ts.shape[0] % num_samples)
+        self.counter = self.counter % ts.shape[0]
+        print("click out", out)
+        return out
+
 
 
 class PlainMixer(Module):
@@ -181,6 +190,25 @@ class MultiScaler(Module):
 
 ############################################
 # ======== Test composite modules ======== #
+
+
+def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100):
+    import matplotlib.pyplot as plt
+    res = []
+    for i in range(num_frames):
+        ts = (i*frame_length + np.arange(frame_length)) / sampling_frequency
+        ts = ts[..., np.newaxis] * np.ones((1,))
+        out = module(ts)
+        res.append(out)
+    res = np.concatenate(res)
+    plt.plot(res)
+    plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
+    plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
+    plt.show()
+
+test_module(ClickSource(num_samples=Parameter(19)))
+test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
+test_module(SawSource(frequency=Parameter(440)))
 
 
 class BabiesFirstSynthie(Module):
