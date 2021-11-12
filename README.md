@@ -38,3 +38,41 @@ def saw_tooth(t, duration=1):
 ## Links
 
 - [pyo](http://ajaxsoundstudio.com/software/pyo/) for audio?
+
+
+## Next Steps
+
+- hot reloading of `make_out` @fabian
+- reactive parameter wiring @fabian
+  - keep in mind that parameters will also become signals!
+
+
+
+param = Parameter.key()
+param = Parameter.signal(signal)
+
+generator(param)
+
+## Considerations
+- some modules have inner state (modulator has its own clock to create a sine). these need to know the ts created by the callback. 
+-> pass [ts] as the first channel[0], and have signal_out / signal_in in channel[1]
+
+
+- callback:
+create ts :: [sampling_time]
+
+generator :: (sampling_times, _) -> (sampling_times, signal_values)
+
+filter :: (sampling_times, input_values) -> (sampling_times, output_values)
+
+but how to pass changing parameters? every timestep there could be new params... but different filters have different numbers of parameters... so channels are not the way
+-> this is also solved by having access to ts, because paramset can be sampled with ts. 
+
+TODO:
+- ability to plug window into any output
+- visual knob/slider indicators which move when using mouse/kb to adjust parameters. should show hi/low/current
+
+
+
+
+
