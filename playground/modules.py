@@ -142,6 +142,40 @@ class SimpleLowPass(Module):
         return output
 
 
+class ShapeModulator(Module):
+    """
+    Modulate a given shape onto clicks in time domain. Nearby clicks will both get the shape, so they may overlap.
+    """
+    def __init__(self, inp: Module, shape: Module):
+        self.last_signal = None
+        self.inp = inp
+        self.shape = shape
+
+    def out(self, ts):
+        if self.last_signal is None:
+            self.last_signal = np.zeros_like(ts)
+        click_signal = self.inp(ts)
+        # like in SimpleLowpass, we really want a different window for every click. but for the moment,
+        # we just use a single window for the whole frame
+        shape = self.shape(ts)
+        full_click_signal = np.concatenate((self.last_signal, click_signal), axis=0)
+        out = scipy.signal.convolve(full_click_signal, shape, mode="valid")
+        self.last_signal = click_signal
+        return out[-ts.shape[0]:, :]
+
+
+class ShapeExp(Module):
+    """Gives a signal of length shape_length"""
+    def __init__(self, shape_length: int, decay=2.0, amplitude=1.0):
+        self.shape_length = shape_length
+        self.decay = decay
+        self.amplitude = amplitude
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        shape = np.array([self.amplitude / pow(self.decay, i) for i in range(self.shape_length)]).reshape(-1,1)
+        return shape
+
+
 class Lift(Module):
     """Lifts a signal from [-1,1] to [0,1]"""
     def __init__(self, inp: Module):
@@ -173,6 +207,20 @@ class Multiplier(Module): # TODO: variadic input
         return self.inp1(ts) * self.inp2(ts)
 
 
+class PlainMixer(Module):
+    """Adds all input signals without changing their amplitudes"""
+    def __init__(self, *args):
+        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
+
+
+class MultiScaler(Module):
+    """
+    Takes n input modules and n input amplitudes and produces n amplified output modules.
+    Combine with PlainMixer to create a Mixer.
+    """
+    pass #TODO
+
+
 class ClickSource(Module):
     """
     Creates a click track [...,0,1,0,...]
@@ -186,29 +234,19 @@ class ClickSource(Module):
     def out(self, ts: np.ndarray) -> np.ndarray:
         num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
         out = np.zeros_like(ts)
-        print("counter", self.counter)
-        print("num 1ones:", int(np.ceil((ts.shape[0]-self.counter) / num_samples)))
+        #print("counter", self.counter)
+        #print("num 1ones:", int(np.ceil((ts.shape[0]-self.counter) / num_samples)))
         for i in range(int(np.ceil((ts.shape[0]-self.counter) / num_samples))):
             out[self.counter + i * num_samples, :] = 1
         self.counter += num_samples - (ts.shape[0] % num_samples)
         self.counter = self.counter % ts.shape[0]
-        print("click out", out)
+        self.counter = self.counter % num_samples
+        #print("click out", out)
         return out
+        # TODO: buggy for num_samples greater than frame_length!
 
 
 
-class PlainMixer(Module):
-    """Adds all input signals without changing their amplitudes"""
-    def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
-
-
-class MultiScaler(Module):
-    """
-    Takes n input modules and n input amplitudes and produces n amplified output modules.
-    Combine with PlainMixer to create a Mixer.
-    """
-    pass #TODO
 
 ############################################
 # ======== Test composite modules ======== #
@@ -228,9 +266,15 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
 
-#test_module(ClickSource(num_samples=Parameter(19)))
+#test_module(ClickSource(Parameter(100)))
 #test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
 #test_module(SawSource(frequency=Parameter(440)))
+
+#test_module(ShapeModulator(ClickSource(Parameter(100)), ShapeExp(100, decay=1.1)))
+
+class ClickModulation(Module):
+    def __init__(self):
+        self.out = ShapeModulator(ClickSource(Parameter(100)), ShapeExp(90, decay=1.1))
 
 
 class BabiesFirstSynthie(Module):

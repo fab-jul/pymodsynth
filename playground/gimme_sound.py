@@ -237,7 +237,7 @@ def main():
         '-d', '--device', type=int, default=3,  # TODO: Go back to None
         help='output device (numeric ID or substring)')
     parser.add_argument(
-        "--output_gen_class", default="BabiesFirstSynthie")
+        "--output_gen_class", default="ClickModulation")
     args = parser.parse_args(remaining)
 
     start_sound(args.output_gen_class, args.device)
