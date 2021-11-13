@@ -270,11 +270,12 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
 #test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
 #test_module(SawSource(frequency=Parameter(440)))
 
-#test_module(ShapeModulator(ClickSource(Parameter(100)), ShapeExp(100, decay=1.1)))
+#test_module(ShapeModulator(ClickSource(Parameter(500)), ShapeExp(100, decay=1.1)))
+
 
 class ClickModulation(Module):
     def __init__(self):
-        self.out = ShapeModulator(ClickSource(Parameter(100)), ShapeExp(90, decay=1.1))
+        self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
 
 
 class BabiesFirstSynthie(Module):
