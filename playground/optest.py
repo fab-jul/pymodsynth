@@ -12,7 +12,7 @@
 # or
 
 class Composable(type):
-    def __gt__(cls, other):
+    def __or__(cls, other):
         print("cls, other:", cls, other)
         meta = type(cls)
         print("meta:", meta)
@@ -51,7 +51,7 @@ print(d.out([1,2,3]))
 r = Repeater()
 print(r.out([1,2,3]))
 
-Dupeater = Duplicator > Repeater
+Dupeater = Duplicator | Repeater
 
 print("dupeater", Dupeater)
 print("type dupeater", type(Dupeater))
@@ -60,4 +60,7 @@ dr = Dupeater()
 print("type dr", type(dr))
 print(dr.out([1,2,3]))
 
+Sickerator = Duplicator | Repeater | Duplicator
+sick = Sickerator()
+print(sick.out([1,2,3]))
 
