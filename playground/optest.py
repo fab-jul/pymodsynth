@@ -11,6 +11,19 @@
 # and
 # or
 
+# Done:
+# F(G()) -> F | G
+# F(G(I())) -> F | G | I
+# Next up:
+# F(G(), H()) -> F | G & H             # & binds tighter than | and works like a comma.
+# F(G(I()), H()) -> F | (G | I) & H    # must rely on brackets again? that makes everything pointless xD
+#                                      # we could have several ops with the same semantics but different precedences
+#                                      # and then use | or / depending on how tightly we want to bind
+# F(G(I()), H()) -> F | G / I & H      # <- like this. but now & must have precedence between / and |...
+# F(G(I()), H(J())) -> F | G / I & H / J        # this will all look terribly unclear.
+# F(G(I(), H()) -> F | G | I & H
+
+
 class Composable(type):
     def __or__(cls, other):
         print("cls, other:", cls, other)
