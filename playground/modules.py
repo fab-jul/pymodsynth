@@ -1,10 +1,13 @@
-from functools import reduce
+from functools import reduce, lru_cache
 
 import numpy as np
-import dataclasses
+import time
 
 import scipy
 import scipy.signal
+
+# some modules need access to sampling_frequency
+SAMPLING_FREQUENCY = 44100
 
 
 class Monitor:
@@ -28,12 +31,18 @@ class Module:
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
+    measure_time = False
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         raise Exception("not implemented")
 
     def __call__(self, ts: np.ndarray) -> np.ndarray:
+        if Module.measure_time:
+            t0 = time.time()
         out = self.out(ts)
+        if Module.measure_time:
+            t1 = time.time()
+            print("Time to call out(ts) for Module", self.__repr__(), ":", t1 - t0)
         if hasattr(self, "monitor") and self.monitor is not None:
             self.monitor.write(out, self.__repr__())
         return out
@@ -96,6 +105,33 @@ class SawSource(Module):
         period = 1 / freq
         out = 2 * (ts/period - np.floor(1/2 + ts/period)) * amp
         return out
+
+
+class ZigSource(Module):
+    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+        self.frequency = frequency
+        self.amplitude = amplitude
+        self.phase = phase
+        self.i = 0
+
+    @lru_cache
+    def _get_period(self, frequency, sampling_frequency=SAMPLING_FREQUENCY):
+        """Create one period per queried frequency"""
+        period_length = int(sampling_frequency / frequency)
+        first = np.linspace(1, -1, int(np.ceil(period_length/2)))
+        second = np.linspace(-1, 1, period_length - len(first) + 2)[1:-1]
+        return np.roll(np.concatenate((first, second)), int(np.ceil(period_length/4)))
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        """Return slice of period of length len(ts)"""
+        # TODO: again, we limit ourselves to one freq/frame :(. needs to change
+        freq = np.mean(self.frequency(ts)[:2])
+        one_period = self._get_period(freq)
+        num_periods = int(np.ceil(len(ts) / len(one_period)))
+        periods = np.tile(one_period, num_periods)
+        res = periods[self.i:self.i+len(ts)]
+        self.i = (self.i + len(ts)) % len(one_period)
+        return res
 
 
 class SineModulator(Module):
@@ -230,7 +266,6 @@ class ClickSource(Module):
         self.num_samples = num_samples
         self.counter = 0
 
-
     def out(self, ts: np.ndarray) -> np.ndarray:
         num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
         out = np.zeros_like(ts)
@@ -262,9 +297,15 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
         res.append(out)
     res = np.concatenate(res)
     plt.plot(res)
-    plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
+    #plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
+
+test_module(ZigSource(Parameter(100)))
+
+
+#test_module(Lift(SawSource(Parameter(100))), num_frames=100)
+#test_module(SineSource(Lift(SawSource(Parameter(100)))), num_frames=100)
 
 #test_module(ClickSource(Parameter(100)))
 #test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
