@@ -127,11 +127,11 @@ class ZigSource(Module):
         # TODO: again, we limit ourselves to one freq/frame :(. needs to change
         freq = np.mean(self.frequency(ts)[:2])
         one_period = self._get_period(freq)
-        num_periods = int(np.ceil(len(ts) / len(one_period)))
+        num_periods = int(np.ceil(len(ts) / len(one_period))) + 1
         periods = np.tile(one_period, num_periods)
         res = periods[self.i:self.i+len(ts)]
         self.i = (self.i + len(ts)) % len(one_period)
-        return res
+        return np.reshape(res, ts.shape)
 
 
 class SineModulator(Module):
@@ -301,7 +301,7 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
 
-test_module(ZigSource(Parameter(100)))
+#test_module(ZigSource(Parameter(100)))
 
 
 #test_module(Lift(SawSource(Parameter(100))), num_frames=100)
@@ -316,8 +316,8 @@ test_module(ZigSource(Parameter(100)))
 
 class ClickModulation(Module):
     def __init__(self):
-        self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
-
+        #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
+        self.out = ZigSource(Parameter(220))
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
