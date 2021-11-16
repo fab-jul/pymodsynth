@@ -39,10 +39,13 @@ class Module:
     def __call__(self, ts: np.ndarray) -> np.ndarray:
         if Module.measure_time:
             t0 = time.time()
+
         out = self.out(ts)
+
         if Module.measure_time:
             t1 = time.time()
             print("Time to call out(ts) for Module", self.__repr__(), ":", t1 - t0)
+
         if hasattr(self, "monitor") and self.monitor is not None:
             self.monitor.write(out, self.__repr__())
         return out
@@ -101,37 +104,25 @@ class SawSource(Module):
     def out(self, ts):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
-        phase = self.phase(ts)  # TODO: unused!
+        phase = self.phase(ts)
         period = 1 / freq
-        out = 2 * (ts/period - np.floor(1/2 + ts/period)) * amp
+        out = 2 * (ts/period + phase - np.floor(1/2 + ts/period + phase)) * amp
         return out
 
 
-class ZigSource(Module):
+class TriangleSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
-        self.i = 0
-
-    @lru_cache
-    def _get_period(self, frequency, sampling_frequency=SAMPLING_FREQUENCY):
-        """Create one period per queried frequency"""
-        period_length = int(sampling_frequency / frequency)
-        first = np.linspace(1, -1, int(np.ceil(period_length/2)))
-        second = np.linspace(-1, 1, period_length - len(first) + 2)[1:-1]
-        return np.roll(np.concatenate((first, second)), int(np.ceil(period_length/4)))
 
     def out(self, ts: np.ndarray) -> np.ndarray:
-        """Return slice of period of length len(ts)"""
-        # TODO: again, we limit ourselves to one freq/frame :(. needs to change
-        freq = np.mean(self.frequency(ts)[:2])
-        one_period = self._get_period(freq)
-        num_periods = int(np.ceil(len(ts) / len(one_period))) + 1
-        periods = np.tile(one_period, num_periods)
-        res = periods[self.i:self.i+len(ts)]
-        self.i = (self.i + len(ts)) % len(one_period)
-        return np.reshape(res, ts.shape)
+        amp = self.amplitude(ts)
+        freq = self.frequency(ts)
+        phase = self.phase(ts)
+        period = 1 / freq
+        out = (2 * np.abs(2 * (ts/period + phase - np.floor(1/2 + ts/period + phase))) - 1) * amp
+        return out
 
 
 class SineModulator(Module):
@@ -234,7 +225,7 @@ class ScalarMultiplier(Module):
         return self.inp(ts) * self.value
 
 
-class Multiplier(Module): # TODO: variadic input
+class Multiplier(Module):  # TODO: variadic input
     def __init__(self, inp1: Module, inp2: Module):
         self.inp1 = inp1
         self.inp2 = inp2
@@ -317,7 +308,7 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
 class ClickModulation(Module):
     def __init__(self):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
-        self.out = ZigSource(Parameter(220))
+        self.out = TriangleSource(Parameter(220))
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
