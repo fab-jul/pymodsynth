@@ -136,6 +136,37 @@ class SineModulator(Module):
         return out
 
 
+class KernelGenerator(Module):
+    def __init__(self, inp: Module, func, length: Module):
+        self.inp = inp  # ts
+        self.func = func  # function from t to [-1, 1]
+        self.length = length  # kernel length, a module
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        # we dont need the inp
+        pass
+
+class LowPass(Module):
+    def __init__(self, inp: Module, kernel_generator: Module):
+        self.inp = inp
+        self.kernel_generator = kernel_generator
+        self.last_signal = None
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        if self.last_signal is None:
+            self.last_signal = np.zeros_like(ts)
+        num_samples, num_channels = ts.shape
+        inp = self.inp(ts)
+        full_signal = np.concatenate((self.last_signal, input), axis=0)
+        kernels = self.kernel_generator(ts)
+        # shape must be (frame_length, max_kernel_size, num_channels)
+        frame_length, max_kernel_size, num_channels = kernels.shape
+        slices = np.array([full_signal[i:i+max_kernel_size] for i in range(frame_length - max_kernel_size, frame_length * 2)])
+        print("kernels.shape", kernels.shape)
+        print("slices.shape", slices.shape)
+
+
+
 class SimpleLowPass(Module):
     """Simplest lowpass: average over previous <window> values"""
     def __init__(self, inp: Module, window_size: Module):
