@@ -74,6 +74,7 @@ class MakeSignal:
     def __init__(self, output_gen_class: str, sample_rate, num_channels):
 
         self.sample_rate = sample_rate
+        modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
         self.i = 0
         self.last_t = time.time()
@@ -136,6 +137,7 @@ class MakeSignal:
             timestamps.currentTime:
                 and the time the callback was invoked.
 
+            All are synchronized with time.time().
             All are synchronized with time.time().
 
         More notes:

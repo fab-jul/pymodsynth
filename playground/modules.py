@@ -1,10 +1,13 @@
-from functools import reduce
+from functools import reduce, lru_cache
 
 import numpy as np
-import dataclasses
+import time
 
 import scipy
 import scipy.signal
+
+# some modules need access to sampling_frequency
+SAMPLING_FREQUENCY = 44100
 
 
 class Monitor:
@@ -28,12 +31,21 @@ class Module:
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
+    measure_time = False
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         raise Exception("not implemented")
 
     def __call__(self, ts: np.ndarray) -> np.ndarray:
+        if Module.measure_time:
+            t0 = time.time()
+
         out = self.out(ts)
+
+        if Module.measure_time:
+            t1 = time.time()
+            print("Time to call out(ts) for Module", self.__repr__(), ":", t1 - t0)
+
         if hasattr(self, "monitor") and self.monitor is not None:
             self.monitor.write(out, self.__repr__())
         return out
@@ -92,9 +104,24 @@ class SawSource(Module):
     def out(self, ts):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
-        phase = self.phase(ts)  # TODO: unused!
+        phase = self.phase(ts)
         period = 1 / freq
-        out = 2 * (ts/period - np.floor(1/2 + ts/period)) * amp
+        out = 2 * (ts/period + phase - np.floor(1/2 + ts/period + phase)) * amp
+        return out
+
+
+class TriangleSource(Module):
+    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+        self.frequency = frequency
+        self.amplitude = amplitude
+        self.phase = phase
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        amp = self.amplitude(ts)
+        freq = self.frequency(ts)
+        phase = self.phase(ts)
+        period = 1 / freq
+        out = (2 * np.abs(2 * (ts/period + phase - np.floor(1/2 + ts/period + phase))) - 1) * amp
         return out
 
 
@@ -107,6 +134,37 @@ class SineModulator(Module):
     def out(self, ts):
         out = self.carrier(ts) * self.inp(ts)
         return out
+
+
+class KernelGenerator(Module):
+    def __init__(self, inp: Module, func, length: Module):
+        self.inp = inp  # ts
+        self.func = func  # function from t to [-1, 1]
+        self.length = length  # kernel length, a module
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        # we dont need the inp
+        pass
+
+class LowPass(Module):
+    def __init__(self, inp: Module, kernel_generator: Module):
+        self.inp = inp
+        self.kernel_generator = kernel_generator
+        self.last_signal = None
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        if self.last_signal is None:
+            self.last_signal = np.zeros_like(ts)
+        num_samples, num_channels = ts.shape
+        inp = self.inp(ts)
+        full_signal = np.concatenate((self.last_signal, input), axis=0)
+        kernels = self.kernel_generator(ts)
+        # shape must be (frame_length, max_kernel_size, num_channels)
+        frame_length, max_kernel_size, num_channels = kernels.shape
+        slices = np.array([full_signal[i:i+max_kernel_size] for i in range(frame_length - max_kernel_size, frame_length * 2)])
+        print("kernels.shape", kernels.shape)
+        print("slices.shape", slices.shape)
+
 
 
 class SimpleLowPass(Module):
@@ -198,7 +256,7 @@ class ScalarMultiplier(Module):
         return self.inp(ts) * self.value
 
 
-class Multiplier(Module): # TODO: variadic input
+class Multiplier(Module):  # TODO: variadic input
     def __init__(self, inp1: Module, inp2: Module):
         self.inp1 = inp1
         self.inp2 = inp2
@@ -229,7 +287,6 @@ class ClickSource(Module):
     def __init__(self, num_samples: Module):
         self.num_samples = num_samples
         self.counter = 0
-
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
@@ -262,20 +319,27 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
         res.append(out)
     res = np.concatenate(res)
     plt.plot(res)
-    plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
+    #plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
+
+#test_module(ZigSource(Parameter(100)))
+
+
+#test_module(Lift(SawSource(Parameter(100))), num_frames=100)
+#test_module(SineSource(Lift(SawSource(Parameter(100)))), num_frames=100)
 
 #test_module(ClickSource(Parameter(100)))
 #test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
 #test_module(SawSource(frequency=Parameter(440)))
 
-#test_module(ShapeModulator(ClickSource(Parameter(100)), ShapeExp(100, decay=1.1)))
+#test_module(ShapeModulator(ClickSource(Parameter(500)), ShapeExp(100, decay=1.1)))
+
 
 class ClickModulation(Module):
     def __init__(self):
-        self.out = ShapeModulator(ClickSource(Parameter(100)), ShapeExp(90, decay=1.1))
-
+        #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
+        self.out = TriangleSource(Parameter(220))
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
