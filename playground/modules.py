@@ -82,7 +82,7 @@ Parameter = Constant
 
 
 class SineSource(Module):
-    def __init__(self, frequency: Module, amplitude=Parameter(0.9), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -96,7 +96,7 @@ class SineSource(Module):
 
 
 class SawSource(Module):
-    def __init__(self, frequency: Module, amplitude=Parameter(0.9), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -144,7 +144,13 @@ class KernelGenerator(Module):
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         # we dont need the inp
-        pass
+        lengths = self.length(ts)  # shape (512, 1)
+        print("lengths", lengths)
+        max_len = int(np.max(lengths))
+        frame_length, num_channels = lengths.shape
+        out = np.array([[self.func(i) if i < int(l) else 0 for i in range(max_len)] for l in lengths])
+        return out.reshape((frame_length, max_len, num_channels))
+
 
 class LowPass(Module):
     def __init__(self, inp: Module, kernel_generator: Module):
@@ -164,6 +170,7 @@ class LowPass(Module):
         slices = np.array([full_signal[i:i+max_kernel_size] for i in range(frame_length - max_kernel_size, frame_length * 2)])
         print("kernels.shape", kernels.shape)
         print("slices.shape", slices.shape)
+        # WIP
 
 
 
@@ -309,6 +316,10 @@ class ClickSource(Module):
 # ======== Test composite modules ======== #
 
 
+
+
+
+
 def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100):
     import matplotlib.pyplot as plt
     res = []
@@ -323,6 +334,19 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
 
+
+def kernel_test():
+    ts = np.arange(512) / 44100
+    ts = ts[..., np.newaxis] * np.ones((1,))
+    length = ScalarMultiplier(Lift(SawSource(frequency=Parameter(10000))), 10)
+    k = KernelGenerator(Parameter(1), lambda x: x*x, length=length)
+    print("k", k.out(ts[:10, :]))
+    print(k.out(ts[:10, :]).shape)
+    print("---")
+
+kernel_test()
+
+
 #test_module(ZigSource(Parameter(100)))
 
 
@@ -335,6 +359,7 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
 
 #test_module(ShapeModulator(ClickSource(Parameter(500)), ShapeExp(100, decay=1.1)))
 
+#test_module(ScalarMultiplier(Lift(SawSource(frequency=Parameter(1000))), 10))
 
 class ClickModulation(Module):
     def __init__(self):
