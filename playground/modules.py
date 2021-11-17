@@ -2,6 +2,7 @@ from functools import reduce, lru_cache
 
 import numpy as np
 import time
+import random
 
 import scipy
 import scipy.signal
@@ -79,6 +80,29 @@ class Constant(Module):
 
 # for now,
 Parameter = Constant
+
+
+class Random(Module):
+    """Output a constant random amplitude until a random change event changes the amplitude. Best explanation ever."""
+    def __init__(self, max_amplitude, change_chance):
+        self.max_amplitude = max_amplitude
+        self.p = change_chance
+        self.amp = random.random() * self.max_amplitude
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        # random experiment
+        frame_length, num_channels = ts.shape
+        res = np.empty((0, num_channels))
+        while len(res) < frame_length:
+            chance_in_frame = 1 - pow(1 - self.p, frame_length - len(res))
+            # to make it independent of frame length, this goes on for a random amount of time
+            block_len = random.randint(1, frame_length - len(res))
+            res = np.concatenate((res, np.ones((block_len, num_channels)) * self.amp))
+            if random.random() < chance_in_frame:
+                self.amp = random.random() * self.max_amplitude
+        return res
+
+
 
 
 class SineSource(Module):
@@ -285,7 +309,7 @@ class Multiplier(Module):  # TODO: variadic input
 class PlainMixer(Module):
     """Adds all input signals without changing their amplitudes"""
     def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) # / (len(args))
+        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args])  # / (len(args))
 
 
 class MultiScaler(Module):
@@ -340,7 +364,7 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
         res.append(out)
     res = np.concatenate(res)
     plt.plot(res)
-    #plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
+    plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
     plt.show()
 
@@ -355,11 +379,15 @@ def kernel_test():
     print("---")
     lp = LowPass(src, kernel_generator=k)
 
-kernel_test()
+#kernel_test()
 
 
 #test_module(ZigSource(Parameter(100)))
 
+#test_module(SineSource(frequency=ScalarMultiplier(Lift(SineSource(frequency=Parameter(100))), 50)))
+#test_module(Random(440, 0.005))
+
+#test_module(SineSource(frequency=Random(440, 0.001)))
 
 #test_module(Lift(SawSource(Parameter(100))), num_frames=100)
 #test_module(SineSource(Lift(SawSource(Parameter(100)))), num_frames=100)
@@ -375,7 +403,8 @@ kernel_test()
 class ClickModulation(Module):
     def __init__(self):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
-        self.out = TriangleSource(Parameter(220))
+        #self.out = TriangleSource(Parameter(220))
+        self.out = SineSource(frequency=Random(440, 0.0005))
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
