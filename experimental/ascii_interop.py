@@ -13,13 +13,6 @@ melody: 1 2 8 12 8 12 1
 # Step count: values in 1-infty 
 steps:  1 1 1 1  1 1  1
 
-# Gate mode:
-# - H: hold for the step count,    XXXXXX
-# - E: Sound for each step count   X X X
-# - F: Sound for first step count  X
-# - S: Skip, no souond
-gate: F F F F F F F F 
-
 # Slide / Skip
 # TODO
 
@@ -62,8 +55,18 @@ x
 """
 
 def test():
-    # TODO: can we just do it inline actually?!?
-    s = StepSequencer.tracking_file()
+
+    s = StepSequencer(
+        melody=[1, 2, 3, 1, 2, 3, 1, 2, 3],
+        steps=[1, 1, 1, 1, 1, 1, 1, 1],
+
+        # Gate mode:
+        # - H: hold for the step count,    XXXXXX
+        # - E: Sound for each step count   X X X
+        # - F: Sound for first step count  X
+        # - S: Skip, no souond
+        gate='HHHHHHH'
+    )
     s = Envelope(env)
 
 
