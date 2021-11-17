@@ -99,11 +99,11 @@ class Random(Module):
             block_len = random.randint(1, frame_length - len(res))
             res = np.concatenate((res, np.ones((block_len, num_channels)) * self.amp))
             if random.random() < chance_in_frame:
-                self.amp = random.random() * self.max_amplitude
+                self.amp = random.random() * self.max_amplitude  # could discretize amps to guarantee pleasant ratios
         return res
 
 
-
+import matplotlib.pyplot as plt
 
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
@@ -115,7 +115,11 @@ class SineSource(Module):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
         phase = self.phase(ts)
+        #plt.plot(freq/20)
         out = amp * np.sin(2 * np.pi * freq * ts + phase)
+        #plt.plot(freq * ts)
+        #plt.plot(out)
+        #plt.show()
         return out
 
 
@@ -309,7 +313,7 @@ class Multiplier(Module):  # TODO: variadic input
 class PlainMixer(Module):
     """Adds all input signals without changing their amplitudes"""
     def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) # / (len(args))
+        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
 
 
 class MultiScaler(Module):
@@ -381,6 +385,8 @@ def kernel_test():
 
 #kernel_test()
 
+#test_module(ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440))
+#test_module(SineSource(frequency=ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440)), num_frames=100)
 
 #test_module(ZigSource(Parameter(100)))
 
@@ -404,10 +410,11 @@ class ClickModulation(Module):
     def __init__(self):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
         #self.out = TriangleSource(Parameter(220))
-        self.one = TriangleSource(frequency=Random(110, 0.00003))
-        self.two = TriangleSource(frequency=Random(440, 0.00006))
+        #self.one = TriangleSource(frequency=Random(110, 0.00003))
+        #self.out = TriangleSource(frequency=Random(440, 0.00006))
         #self.out = PlainMixer(self.one, self.two)
-        self.out = PlainMixer(*[TriangleSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 3)])
+        self.out = PlainMixer(*[SineSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 4)])
+
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
