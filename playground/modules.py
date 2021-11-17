@@ -404,7 +404,9 @@ class ClickModulation(Module):
     def __init__(self):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
         #self.out = TriangleSource(Parameter(220))
-        self.out = SineSource(frequency=Random(440, 0.0005))
+        self.one = TriangleSource(frequency=Random(110, 0.00003))
+        self.two = TriangleSource(frequency=Random(440, 0.00006))
+        self.out = PlainMixer(self.one, self.two)
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
