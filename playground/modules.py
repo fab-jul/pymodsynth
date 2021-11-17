@@ -309,7 +309,7 @@ class Multiplier(Module):  # TODO: variadic input
 class PlainMixer(Module):
     """Adds all input signals without changing their amplitudes"""
     def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args])  # / (len(args))
+        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) # / (len(args))
 
 
 class MultiScaler(Module):
@@ -372,7 +372,7 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
 def kernel_test():
     ts = np.arange(512) / 44100
     ts = ts[..., np.newaxis] * np.ones((1,))
-    length = PlainMixer(Parameter(1), ScalarMultiplier(Lift(SawSource(frequency=Parameter(10000))), 5))
+    length = PlainMixer(Parameter(1), ScalarMultiplier(Lift(SawSource(frequency=Parameter(10000))), 10))
     k = KernelGenerator(Parameter(1), lambda x: x*x, length=length)
     print("k", k.out(ts[:10, :]))
     print(k.out(ts[:10, :]).shape)
@@ -406,7 +406,8 @@ class ClickModulation(Module):
         #self.out = TriangleSource(Parameter(220))
         self.one = TriangleSource(frequency=Random(110, 0.00003))
         self.two = TriangleSource(frequency=Random(440, 0.00006))
-        self.out = PlainMixer(self.one, self.two)
+        #self.out = PlainMixer(self.one, self.two)
+        self.out = PlainMixer(*[TriangleSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 3)])
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
