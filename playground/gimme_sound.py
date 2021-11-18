@@ -15,18 +15,10 @@ import os.path
 
 import params_lib
 import filewatcher
-import itertools
-import queue
-import random
-import select
 import sys
-import threading
 import time
 import typing
 
-import hot_reloader
-
-import moderngl_window
 import numpy as np
 import sounddevice as sd
 
@@ -39,8 +31,8 @@ import modules
 EVENT_QUEUE = collections.deque(maxlen=100)
 
 
-
-_TIMERS = []
+# Store all current timers.
+_TIMERS: typing.List["Timer"] = []
 
 
 @dataclasses.dataclass
@@ -72,7 +64,6 @@ def call_timers():
 class MakeSignal:
 
     def __init__(self, output_gen_class: str, sample_rate, num_channels):
-
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
@@ -121,10 +112,12 @@ class MakeSignal:
             param_spec.key: param_spec for param_spec in param_specs
             if param_spec.key is not None}
 
-        live_graph_modern_gl.get_current_window().set_interesting_keys(
-            self.key_mapping.keys())
+        if window := live_graph_modern_gl.get_current_window():
+            window.set_interesting_keys(self.key_mapping.keys())
+            self.params_watcher.did_read_file_just_now()  # Signal that we ingested changes.
+        else:
+            print("WARN: No window available!")
 
-        self.params_watcher.did_read_file_just_now()  # Signal that we ingested changes.
 
     def callback(self, outdata: np.ndarray, num_samples: int, timestamps, status):
         """Callback.
@@ -148,7 +141,7 @@ class MakeSignal:
         if t - self.time_of_last_timer_update >= 1.:
             call_timers()
             self.time_of_last_timer_update = t
-        delta = t - self.last_t
+        # delta = t - self.last_t
         self.last_t = t
         if status:
             print(status, file=sys.stderr)
@@ -183,18 +176,21 @@ class MakeSignal:
             duration = time.time() - s
             if duration > 1e-4:
                 print("WARN: slow event ingestion!")
-        #live_graph_modern_gl.SIGNAL[:] = outdata[:]
-        live_graph_modern_gl.SIGNAL[:] = self.monitor.get_data()
+        if window := live_graph_modern_gl.get_current_window():
+            window.set_signal(self.monitor.get_data())
         # if random.random() > 0.99:
         #     self.output_gen.detach_monitor()
         #     self.output_gen.sin0.attach_monitor(self.monitor)
         self.i += num_samples
 
 
-def start_app():
+def start_app(num_samples: int, num_channels: int):
     try:
         live_graph_modern_gl.run_window_config(
-            live_graph_modern_gl.RandomPlot, event_queue=EVENT_QUEUE)
+            live_graph_modern_gl.RandomPlot,
+            event_queue=EVENT_QUEUE,
+            num_samples=num_samples,
+            num_channels=num_channels)
     except live_graph_modern_gl.QuitException:
         # Raised when the window catches the quit event.
         pass
@@ -208,17 +204,18 @@ def start_sound(output_gen_class: str, device: int):
         device = None  # Auto-select.
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
 
-    block_size = 512
-    channels = 1
+    # TODO(fab-jul): Investigate how large we can make this.
+    num_samples = 2048
+    num_channels = 1
     sin = MakeSignal(output_gen_class=output_gen_class,
                      sample_rate=sample_rate,
-                     num_channels=channels)
+                     num_channels=num_channels)
 
     with sd.OutputStream(
-            device=device, blocksize=block_size,
+            device=device, blocksize=num_samples,
             latency="low",
-            channels=channels, callback=sin.callback, samplerate=sample_rate):
-        start_app()
+            channels=num_channels, callback=sin.callback, samplerate=sample_rate):
+        start_app(num_samples, num_channels)
 
 
 def main():
