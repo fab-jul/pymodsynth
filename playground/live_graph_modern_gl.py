@@ -10,21 +10,6 @@ import moderngl_window as mglw
 import numpy as np
 
 
-# TODO: make independent of num_samples and num_channels.
-NUM_SAMPLES = 512
-# Shared among users. Overwrite to update view.
-# NOTE: the 1 is because we have a one channel output.
-SIGNAL = np.zeros((512, 1), np.float32)
-
-DATA_SAMPLES = 2 * NUM_SAMPLES
-
-# Static vectors needed to draw signal.
-_X = np.linspace(-1.0, 1.0, DATA_SAMPLES)
-_R = np.ones(DATA_SAMPLES)
-_G = 1/DATA_SAMPLES * np.arange(DATA_SAMPLES)
-_B = 1 - (1/DATA_SAMPLES * np.arange(DATA_SAMPLES))
-
-
 _CURRENT_WINDOW = [None]
 
 
@@ -59,6 +44,8 @@ class RandomPlot(mglw.WindowConfig):
                  wnd,
                  timer,
                  event_queue: collections.deque,
+                 num_samples: int,
+                 num_channels: int,
                  ):
         super().__init__(ctx=ctx, wnd=wnd, timer=timer)
 
@@ -67,7 +54,21 @@ class RandomPlot(mglw.WindowConfig):
         self._modifiers = {}
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
-        self.signals = collections.deque()
+        self.echoes = collections.deque()
+
+        self._signal = np.zeros((num_samples, num_channels), np.float32)
+        data_samples = 2 * num_samples
+        # Static vectors needed to draw signal.
+        x = np.linspace(-1.0, 1.0, data_samples)
+        r = np.ones(data_samples)
+        g = 1 / data_samples * np.arange(data_samples)
+        b = 1 - (1 / data_samples * np.arange(data_samples))
+
+        # Shape: (num_samples, 5), where the signal lives at [:, 1].
+        self.vertices = np.stack((x, np.zeros_like(x), r, g, b), axis=-1)
+
+    def set_signal(self, signal):
+        self._signal[:] = signal
 
     def set_interesting_keys(self, keys_as_ascii: typing.Iterable[str]):
         self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k for k in keys_as_ascii}
@@ -122,7 +123,8 @@ class RandomPlot(mglw.WindowConfig):
             ''',
         )
 
-        signal = SIGNAL[:, 0]
+        # Only visualize first channel.
+        signal = self._signal[:, 0]  # Shape: (num_samples,)
 
         FFT = False
         if FFT:
@@ -132,26 +134,34 @@ class RandomPlot(mglw.WindowConfig):
             fft_abs = np.abs(fft)
             signal = fft_abs
 
-        signal = np.stack((signal + 0.03, signal - 0.03), axis=-1)
-        signal = signal.flatten()
-        self.signals.append(signal)
-        if len(self.signals) > 10:
-            self.signals.popleft()
-        for i, sig in enumerate(self.signals):
-            inv_i = len(self.signals) - i
+        # self.vertices = np.stack((x, np.zeros_like(x), r, g, b), axis=-1)
+        # Turn signal into a solid line by:
+        # - setting every even element to signal + 0.1
+        # - setting every odd element to signal - 0.1
+        self.vertices[::2, 1] = signal + 0.3
+        self.vertices[1::2, 1] = signal - 0.3
+
+        self.echoes.append(self.vertices[:])
+        if len(self.echoes) > 1:
+            self.echoes.popleft()
+        for i, sig in enumerate(self.echoes):
+            inv_i = len(self.echoes) - i
             fade = pow(1.2, inv_i)
-            vertices = np.dstack([_X, sig + inv_i*0.07, _R/fade, _G/fade, _B/fade])
-            vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
+            # TODO: add in some dimensions, divide in some others
+            #vertices = np.dstack([_X, sig + inv_i*0.07, _R/fade, _G/fade, _B/fade])
+            vbo = self.ctx.buffer(sig.astype('f4').tobytes())
             vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
             vao.render(moderngl.TRIANGLE_STRIP)
+
 
 
 # This is a copy of moderngl_window.run_window_config that adds some features:
 # - do not care about sys.argv
 # - pass args to the config_cls instead
-def run_window_config(config_cls: mglw.WindowConfig,
+def run_window_config(config_cls: typing.Type[RandomPlot],
                       event_queue: collections.deque,
-                      **config_cls_kwargs) -> None:
+                      num_samples: int,
+                      num_channels: int):
     mglw.setup_basic_logging(config_cls.log_level)
     window_cls = mglw.get_local_window_cls(None)
 
@@ -173,7 +183,8 @@ def run_window_config(config_cls: mglw.WindowConfig,
     window.print_context_info()
     mglw.activate_context(window=window)
     timer = mglw.Timer()
-    config_instance = config_cls(ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue)
+    config_instance = config_cls(ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue,
+                                 num_samples=num_samples, num_channels=num_channels)
     window.config = config_instance
     _CURRENT_WINDOW[0] = config_instance
 

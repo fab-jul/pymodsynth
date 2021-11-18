@@ -225,8 +225,8 @@ class SimpleLowPass(Module):
         window_sizes = self.window_size(ts)
         # TODO: Now we have one window size per frame. Seems reasonable?
         # Maybe we want to have a "MapsToSingleValueModule".
-        window_size: int = round(float(np.mean(window_sizes)))
-        mean_filter = np.ones((window_size,), dtype=ts.dtype)
+        window_size: int = max(1, round(float(np.mean(window_sizes))))
+        mean_filter = np.ones((window_size,), dtype=ts.dtype) / window_size
         result_per_channel = []
         start_time_index = num_samples - window_size + 1
         # Note that this for loop si over at most 2 elements!
@@ -349,7 +349,7 @@ class ClickSource(Module):
 ############################################
 # ======== Test composite modules ======== #
 
-def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100, show=True):
+def test_module(module: Module, num_frames=5, frame_length=2048, num_channels=1, sampling_frequency=44100, show=True):
     import matplotlib.pyplot as plt
     res = []
     for i in range(num_frames):
@@ -373,7 +373,7 @@ def kernel_test():
     print("k", k.out(ts[:10, :]))
     print(k.out(ts[:10, :]).shape)
     print("---")
-    lp = LowPass(src, kernel_generator=k)
+    #lp = KernelConvolver(src, kernel_generator=k)
 
 #kernel_test()
 
@@ -402,8 +402,16 @@ class BabiesFirstSynthie(Module):
         self.sin1 = SineSource(frequency=Parameter(440))
         self.sin2 = SineSource(frequency=Parameter(220))
 
-        self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
+        #self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
 
+        self.changingsine0 = Multiplier(self.sin0, self.lfo)
+        self.changingsine1 = SineModulator(self.sin0, Parameter(1))
+         #above 2 should be equal
+        self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
 
+        self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
+        self.modulator = SineModulator(self.src, Parameter(10))
+        self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
+        self.out = self.lowpass
 
 

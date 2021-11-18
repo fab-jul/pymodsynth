@@ -91,11 +91,3 @@ class Program:
 
     def __call__(self, clock):
         return self.lfo2(clock)
-
-
-p = Program()
-params = p.find_params()
-params["lfo.amplitude"].set_value(1)
-print(params)
-
-p(1)
