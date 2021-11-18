@@ -10,6 +10,7 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
+import midi_lib
 import dataclasses
 import importlib
 import os.path
@@ -91,6 +92,18 @@ class MakeSignal:
         self.modules_watcher.did_read_file_just_now()
 
         self.monitor = modules.Monitor()
+        self.midi_controller: typing.Optional[midi_lib.Controller] = midi_lib.Controller.make()
+        if self.midi_controller:
+            def make_callback(key):
+                def callback(_, d):
+                    EVENT_QUEUE.appendleft(
+                        live_graph_modern_gl.KeyAndMouseEvent(
+                            d, d, key, True))
+                return callback
+            self.midi_controller.register_callback(
+                midi_lib.Knob(30, 5), make_callback("f"))
+            self.midi_controller.register_callback(
+                midi_lib.Knob(31, 5), make_callback("w"))
         self.output_gen.attach_monitor(self.monitor)
 
         # TODO(fab-jul): Push this into Parameter class,
@@ -153,7 +166,6 @@ class MakeSignal:
         self.state = self.output_gen.find_state()
         self.output_gen.attach_monitor(self.monitor)
 
-
     def update_keymapping_from_params_file(self):
         if not self.params_watcher.has_changes:
             # No changes, nothing to read!
@@ -188,6 +200,8 @@ class MakeSignal:
         More notes:
             Can raise `CallbackStop()` to finish the stream.
         """
+        if controller := self.midi_controller:
+            controller.read_events()
         t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
         # For performance, only update timers at most 1 per second
         if t - self.time_of_last_timer_update >= 1.:
@@ -221,9 +235,10 @@ class MakeSignal:
                         self.params[param].value = np.clip(out, lo, hi)
                 #
                 if type(event) == live_graph_modern_gl.SwitchMonitorEvent:
+                    print("Attaching to sin")
                     #event2 = live_graph_modern_gl.SwitchMonitorEvent = EVENT_QUEUE.pop()
                     self.output_gen.detach_monitor()
-                    self.output_gen.sin0.attach_monitor(self.monitor)
+                    self.output_gen.sin0.frequency.attach_monitor(self.monitor)
                 #
             duration = time.time() - s
             if duration > 1e-4:
