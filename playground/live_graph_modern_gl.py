@@ -67,6 +67,7 @@ class RandomPlot(mglw.WindowConfig):
         self._modifiers = {}
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
+        self.signals = collections.deque()
 
     def set_interesting_keys(self, keys_as_ascii: typing.Iterable[str]):
         self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k for k in keys_as_ascii}
@@ -123,23 +124,26 @@ class RandomPlot(mglw.WindowConfig):
 
         signal = SIGNAL[:, 0]
 
-        # mwe
         FFT = False
         if FFT:
-
             fft = np.fft.fft(signal, n=signal.shape[0])
             fft.resize((512,))
             #print("fft", fft.shape)
             fft_abs = np.abs(fft)
             signal = fft_abs
-        #
 
-        signal = np.stack((signal + 0.1, signal - 0.1), axis=-1)
+        signal = np.stack((signal + 0.03, signal - 0.03), axis=-1)
         signal = signal.flatten()
-        vertices = np.dstack([_X, signal, _R, _G, _B])
-        vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
-        vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
-        vao.render(moderngl.TRIANGLE_STRIP)
+        self.signals.append(signal)
+        if len(self.signals) > 10:
+            self.signals.popleft()
+        for i, sig in enumerate(self.signals):
+            inv_i = len(self.signals) - i
+            fade = pow(1.2, inv_i)
+            vertices = np.dstack([_X, sig + inv_i*0.07, _R/fade, _G/fade, _B/fade])
+            vbo = self.ctx.buffer(vertices.astype('f4').tobytes())
+            vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
+            vao.render(moderngl.TRIANGLE_STRIP)
 
 
 # This is a copy of moderngl_window.run_window_config that adds some features:

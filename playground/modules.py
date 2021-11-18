@@ -115,11 +115,17 @@ class SineSource(Module):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
         phase = self.phase(ts)
-        #plt.plot(freq/20)
-        out = amp * np.sin(2 * np.pi * freq * ts + phase)
-        #plt.plot(freq * ts)
-        #plt.plot(out)
-        #plt.show()
+        out = amp * np.sin((2 * np.pi * freq * ts) + phase)
+        # print("------------------------------")
+        # print("ts", ts)
+        # print("freq", freq)
+        # print("freq*ts", freq * ts)
+        # print("out", out)
+        # if type(self.frequency) != Parameter:
+        #     plt.plot(freq/20)
+        #     plt.plot(freq * ts)
+        #     plt.plot(out)
+        #     plt.show()
         return out
 
 
@@ -358,7 +364,7 @@ class ClickSource(Module):
 
 
 
-def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100):
+def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100, show=True):
     import matplotlib.pyplot as plt
     res = []
     for i in range(num_frames):
@@ -370,7 +376,8 @@ def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, 
     plt.plot(res)
     plt.vlines([i * frame_length for i in range(0, num_frames+1)], ymin=np.min(res)*1.1, ymax=np.max(res)*1.1, linewidth=0.8, colors='r')
     plt.hlines(0, -len(res)*0.1, len(res)*1.1, linewidth=0.8, colors='r')
-    plt.show()
+    if show:
+        plt.show()
 
 
 def kernel_test():
@@ -387,6 +394,10 @@ def kernel_test():
 
 #test_module(ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440))
 #test_module(SineSource(frequency=ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440)), num_frames=100)
+
+#test_module(Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100)), show=False)
+#test_module(PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100))), show=False)
+#test_module(SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100)))), num_frames=10)
 
 #test_module(ZigSource(Parameter(100)))
 
@@ -411,9 +422,11 @@ class ClickModulation(Module):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
         #self.out = TriangleSource(Parameter(220))
         #self.one = TriangleSource(frequency=Random(110, 0.00003))
-        #self.out = TriangleSource(frequency=Random(440, 0.00006))
+        #self.two = TriangleSource(frequency=Random(440, 0.00006))
         #self.out = PlainMixer(self.one, self.two)
-        self.out = PlainMixer(*[SineSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 4)])
+
+        self.out = PlainMixer(*[SineSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 3)])
+        #self.out = SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100))))
 
 
 class BabiesFirstSynthie(Module):
