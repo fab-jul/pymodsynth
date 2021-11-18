@@ -7,6 +7,8 @@ from typing import Callable
 class FileModifiedTimeTracker:
 
     def __init__(self, path_to_watch: str):
+        if not os.path.isfile(path_to_watch):
+            raise FileNotFoundError(path_to_watch)
         self.path_to_watch = path_to_watch
         self.known_last_change = None
 
