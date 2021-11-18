@@ -103,8 +103,6 @@ class Random(Module):
         return res
 
 
-import matplotlib.pyplot as plt
-
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
@@ -116,16 +114,6 @@ class SineSource(Module):
         freq = self.frequency(ts)
         phase = self.phase(ts)
         out = amp * np.sin((2 * np.pi * freq * ts) + phase)
-        # print("------------------------------")
-        # print("ts", ts)
-        # print("freq", freq)
-        # print("freq*ts", freq * ts)
-        # print("out", out)
-        # if type(self.frequency) != Parameter:
-        #     plt.plot(freq/20)
-        #     plt.plot(freq * ts)
-        #     plt.plot(out)
-        #     plt.show()
         return out
 
 
@@ -177,22 +165,22 @@ class KernelGenerator(Module):
     TODO: consider: could make func dependent on ts, or even have a func-generating Module
     Returns a shape (frame_length, max_kernel_size, num_channels).
     """
-    def __init__(self, inp: Module, func, length: Module):
-        self.inp = inp  # ts
+
+    def __init__(self, func, length: Module):
         self.func = func  # function from t to [-1, 1]
         self.length = length  # kernel length, a module
 
     def out(self, ts: np.ndarray) -> np.ndarray:
+        norm = lambda v: v / np.linalg.norm(v)
         # we dont need the inp
         lengths = self.length(ts)  # shape (512, 1)
-        print("lengths", lengths)
         max_len = int(np.max(lengths))
         frame_length, num_channels = lengths.shape
-        out = np.array([[self.func(i) if i < int(l) else 0 for i in range(max_len)] for l in lengths])
+        out = np.array([norm([self.func(i) if i < int(l) else 0 for i in range(max_len)]) for l in lengths])
         return out.reshape((frame_length, max_len, num_channels))
 
 
-class LowPass(Module):
+class KernelConvolver(Module):
     """
     Takes a kernel-generator to smooth the input.
     TODO: some python loops seem unavoidable, but maybe there are numpy formulations to save effort.
@@ -207,14 +195,16 @@ class LowPass(Module):
             self.last_signal = np.zeros_like(ts)
         num_samples, num_channels = ts.shape
         inp = self.inp(ts)
-        full_signal = np.concatenate((self.last_signal, input), axis=0)
+        full_signal = np.concatenate((self.last_signal, inp), axis=0)
+        self.last_signal = inp
         kernels = self.kernel_generator(ts)
         # shape must be (frame_length, max_kernel_size, num_channels)
         frame_length, max_kernel_size, num_channels = kernels.shape
-        slices = np.array([full_signal[i:i+max_kernel_size] for i in range(frame_length - max_kernel_size, frame_length * 2)])
-        print("kernels.shape", kernels.shape)
-        print("slices.shape", slices.shape)
-        # WIP
+        slices = np.concatenate([full_signal[i:i+max_kernel_size, :] for i in range(frame_length - max_kernel_size + 1, frame_length * 2 - max_kernel_size + 1)])
+        slices = slices.reshape(kernels.shape)
+        res_block = np.tensordot(slices, kernels, axes=[[1, 2], [1, 2]])
+        res = np.diag(res_block).reshape(ts.shape)
+        return res
 
 
 
@@ -359,11 +349,6 @@ class ClickSource(Module):
 ############################################
 # ======== Test composite modules ======== #
 
-
-
-
-
-
 def test_module(module: Module, num_frames=5, frame_length=512, num_channels=1, sampling_frequency=44100, show=True):
     import matplotlib.pyplot as plt
     res = []
@@ -392,41 +377,22 @@ def kernel_test():
 
 #kernel_test()
 
-#test_module(ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440))
-#test_module(SineSource(frequency=ScalarMultiplier(Lift(SineSource(frequency=Parameter(20))), 440)), num_frames=100)
 
-#test_module(Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100)), show=False)
-#test_module(PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100))), show=False)
-#test_module(SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100)))), num_frames=10)
-
-#test_module(ZigSource(Parameter(100)))
-
-#test_module(SineSource(frequency=ScalarMultiplier(Lift(SineSource(frequency=Parameter(100))), 50)))
-#test_module(Random(440, 0.005))
-
-#test_module(SineSource(frequency=Random(440, 0.001)))
-
-#test_module(Lift(SawSource(Parameter(100))), num_frames=100)
-#test_module(SineSource(Lift(SawSource(Parameter(100)))), num_frames=100)
-
-#test_module(ClickSource(Parameter(100)))
-#test_module(SimpleLowPass(SineSource(frequency=Parameter(440)), window_size=Parameter(513)))
-#test_module(SawSource(frequency=Parameter(440)))
-
-#test_module(ShapeModulator(ClickSource(Parameter(500)), ShapeExp(100, decay=1.1)))
-
-#test_module(ScalarMultiplier(Lift(SawSource(frequency=Parameter(1000))), 10))
 
 class ClickModulation(Module):
     def __init__(self):
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
+        self.wild_triangles = PlainMixer(*[TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3)])
+        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
+        test_module(self.out, num_frames=10)
+
         #self.out = TriangleSource(Parameter(220))
         #self.one = TriangleSource(frequency=Random(110, 0.00003))
         #self.two = TriangleSource(frequency=Random(440, 0.00006))
         #self.out = PlainMixer(self.one, self.two)
 
-        self.out = PlainMixer(*[SineSource(frequency=Random(110 * i, 0.000015 * i)) for i in range(1, 3)])
-        #self.out = SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(SineSource(frequency=Parameter(100))), Parameter(100))))
+        #self.out = PlainMixer(*[TriangleSource(frequency=Random(110 * i, 0.000015 )) for i in range(1, 4)])
+        #self.out = SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(TriangleSource(frequency=Parameter(1))), Parameter(1))))
 
 
 class BabiesFirstSynthie(Module):
@@ -436,24 +402,8 @@ class BabiesFirstSynthie(Module):
         self.sin1 = SineSource(frequency=Parameter(440))
         self.sin2 = SineSource(frequency=Parameter(220))
 
-
         self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
 
 
-        #self.changingsine0 = Multiplier(self.src, self.lfo)
-        #self.changingsine1 = SineModulator(self.src, Parameter(1))
-        # above 2 should be equal
-        #self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
-
-        #self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
-        #self.modulator = SineModulator(self.src, Parameter(10))
-        #self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
-        #self.out = self.lowpass
-
-
-class StepSequencing(Module):
-    def __init__(self):
-        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
-        self.out = self.sin0
 
 
