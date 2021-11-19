@@ -237,7 +237,7 @@ def interactively_make_name_mapping(port_name_regex, out_file):
         recorder.wait_for_knob()
     recorder.to_file(out_file)
     # Testing.
-    print(KnownKnobs(out_file))
+    print(KnownKnobs.from_file(out_file))
 
 
 def explore(port_name_regex):

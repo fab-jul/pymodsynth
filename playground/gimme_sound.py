@@ -87,9 +87,9 @@ class MakeSignal:
         self.key_mapping: typing.Dict[str, modules.Parameter] = {}
         self.knob_mapping: typing.Dict[midi_lib.Knob, modules.Parameter] = {}
 
-        # TODO: make a flag!
-        # TODO: Support reloading
         try:
+            # TODO: make file a flag!
+            # TODO: Support file reloading.
             self.known_knobs = midi_lib.KnownKnobs.from_file("traktor_kontrol_knobs.txt")
         except FileNotFoundError as e:
             print(f"ERROR: {e}")

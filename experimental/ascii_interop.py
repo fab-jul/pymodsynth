@@ -59,7 +59,6 @@ def test():
     s = StepSequencer(
         melody=[1, 2, 3, 1, 2, 3, 1, 2, 3],
         steps=[1, 1, 1, 1, 1, 1, 1, 1],
-
         # Gate mode:
         # - H: hold for the step count,    XXXXXX
         # - E: Sound for each step count   X X X
