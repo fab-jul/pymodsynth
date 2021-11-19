@@ -112,17 +112,25 @@ class Module:
 class Constant(Module):
     def __init__(self, value):
         self.value = value
+        self.previous_value = value
 
     def out(self, ts):
-        # TODO: consider: output a scalar or a vector?
-        return np.ones_like(ts) * self.value
+        num_samples, num_channels = ts.shape
+        # TODO: is cool
+#        if abs(self.previous_value - self.value) > 1e-4:
+#            out = (np.linspace(self.previous_value, self.value, num_samples).reshape(-1, 1) *
+#                   np.ones((num_channels,)))
+#            print(self.previous_value, self.value, out[:10])
+#        else:
+#            out = np.ones_like(ts) * self.value
+        out = np.ones_like(ts) * self.value
+        self.previous_value = self.value
+        return out
+
+
 
     def __repr__(self):
         return f'Constant(value={self.value})'
-
-
-# for now,
-class Parameter(Constant):
 
     def set(self, value):
         self.value = value
@@ -130,18 +138,29 @@ class Parameter(Constant):
     def get(self):
         return self.value
 
+# for now,
+Parameter = Constant
+
+
 
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
+        self.prev = None
 
     def out(self, ts):
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
         phase = self.phase(ts)
-        out = amp * np.sin(2 * np.pi * freq * ts + phase)
+        if self.prev is not None:
+            last_value = self.prev[-1]
+            shift = np.arcsin(last_value) / (2 * np.pi * freq[0])
+        else:
+            shift = 0
+        out = amp * np.sin(2 * np.pi * freq * (ts - shift) + phase)
+        self.prev = out
         return out
 
 
@@ -429,20 +448,15 @@ class ClickModulation(Module):
         self.out = self.sin
         #self.out = TriangleSource(Parameter(220))
 
-class BabiesFirstSynthie(Module):
+class TestModule(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
         self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
         self.sin1 = SineSource(frequency=Parameter(440))
         self.sin2 = SineSource(frequency=Parameter(220))
 
-
-        #self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
-
-
         self.changingsine0 = Multiplier(self.sin0, self.lfo)
         self.changingsine1 = SineModulator(self.sin0, Parameter(1))
-         #above 2 should be equal
         self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
 
         self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
@@ -453,9 +467,9 @@ class BabiesFirstSynthie(Module):
 
 class StepSequencing(Module):
     def __init__(self):
-        self.sin0 = SawSource(frequency=Parameter(440*(2/3)*(2/3)))
-        self.lowpass = SimpleLowPass(self.sin0, window_size=Parameter(2))
-        self.out = self.lowpass
+        self.sin0 = SineSource(frequency=Parameter(440))
+        #self.lowpass = SimpleLowPass(self.sin0, window_size=Parameter(2))
+        self.out = self.sin0
 
 
 class TestModule(Module):
