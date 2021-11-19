@@ -10,16 +10,6 @@ import moderngl_window as mglw
 import numpy as np
 
 
-_CURRENT_WINDOW = [None]
-
-
-def get_current_window() -> typing.Optional["RandomPlot"]:
-    return _CURRENT_WINDOW[0]
-
-
-class QuitException(Exception):
-    """Raised to exit the render loop. Needs to be caught."""
-    pass
 
 
 class KeyAndMouseEvent(typing.NamedTuple):
@@ -36,7 +26,7 @@ class SwitchMonitorEvent:
     pass
 
 
-class RandomPlot(mglw.WindowConfig):
+class SignalWindow(mglw.WindowConfig):
     gl_version = (3, 3)
 
     def __init__(self,
@@ -154,39 +144,45 @@ class RandomPlot(mglw.WindowConfig):
             vao.render(moderngl.TRIANGLE_STRIP)
 
 
+def prepare_window(event_queue: collections.deque,
+                   num_samples: int,
+                   num_channels: int) -> Tuple[mglw.BaseWindow, mglw.Timer, SignalWindow]:
+    """This is a copy of moderngl_window.run_window_config.
 
-# This is a copy of moderngl_window.run_window_config that adds some features:
-# - do not care about sys.argv
-# - pass args to the config_cls instead
-def run_window_config(config_cls: typing.Type[RandomPlot],
-                      event_queue: collections.deque,
-                      num_samples: int,
-                      num_channels: int):
-    mglw.setup_basic_logging(config_cls.log_level)
+    We add some features:
+    - do not care about sys.argv
+    - pass args to the config_cls instead
+    """
+    mglw.setup_basic_logging(SignalWindow.log_level)
     window_cls = mglw.get_local_window_cls(None)
 
-    h, w = map(int, config_cls.window_size)
+    h, w = map(int, SignalWindow.window_size)
     size = h, w
-    show_cursor = config_cls.cursor
+    show_cursor = SignalWindow.cursor
 
     window = window_cls(
-        title=config_cls.title,
+        title=SignalWindow.title,
         size=size,
-        fullscreen=config_cls.fullscreen,
-        resizable=config_cls.resizable,
-        gl_version=config_cls.gl_version,
-        aspect_ratio=config_cls.aspect_ratio,
-        vsync=config_cls.vsync,
-        samples=config_cls.samples,
+        fullscreen=SignalWindow.fullscreen,
+        resizable=SignalWindow.resizable,
+        gl_version=SignalWindow.gl_version,
+        aspect_ratio=SignalWindow.aspect_ratio,
+        vsync=SignalWindow.vsync,
+        samples=SignalWindow.samples,
         cursor=show_cursor if show_cursor is not None else True,
     )
     window.print_context_info()
     mglw.activate_context(window=window)
     timer = mglw.Timer()
-    config_instance = config_cls(ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue,
-                                 num_samples=num_samples, num_channels=num_channels)
-    window.config = config_instance
-    _CURRENT_WINDOW[0] = config_instance
+    signal_window = SignalWindow(
+        ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue,
+        num_samples=num_samples, num_channels=num_channels)
+    window.config = signal_window
+    return window, timer, signal_window
+
+
+def run_window_loop(window: mglw.BaseWindow, timer: mglw.Timer):
+    """Run window loop."""
 
     # Swap buffers once before staring the main loop.
     # This can trigged additional resize events reporting
@@ -196,18 +192,18 @@ def run_window_config(config_cls: typing.Type[RandomPlot],
 
     timer.start()
 
-    while not window.is_closing:
-        current_time, delta = timer.next_frame()
-
-        if window.config.clear_color is not None:
-            window.clear(*window.config.clear_color)
-
-        # Always bind the window framebuffer before calling render
-        window.use()
-
-        window.render(current_time, delta)
-        if not window.is_closing:
-            window.swap_buffers()
+    try:
+        while not window.is_closing:
+            current_time, delta = timer.next_frame()
+            if window.config.clear_color is not None:
+                window.clear(*window.config.clear_color)
+            # Always bind the window framebuffer before calling render
+            window.use()
+            window.render(current_time, delta)
+            if not window.is_closing:
+                window.swap_buffers()
+    except KeyboardInterrupt:
+        pass
 
     _, duration = timer.stop()
     window.destroy()
