@@ -54,6 +54,7 @@ class RandomPlot(mglw.WindowConfig):
         self._modifiers = {}
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
+        self.echoes = collections.deque()
 
         self._signal = np.zeros((num_samples, num_channels), np.float32)
         data_samples = 2 * num_samples
@@ -125,25 +126,33 @@ class RandomPlot(mglw.WindowConfig):
         # Only visualize first channel.
         signal = self._signal[:, 0]  # Shape: (num_samples,)
 
-        # mwe
         FFT = False
         if FFT:
-
             fft = np.fft.fft(signal, n=signal.shape[0])
             fft.resize((512,))
             #print("fft", fft.shape)
             fft_abs = np.abs(fft)
             signal = fft_abs
-        #
 
+        # self.vertices = np.stack((x, np.zeros_like(x), r, g, b), axis=-1)
         # Turn signal into a solid line by:
         # - setting every even element to signal + 0.1
         # - setting every odd element to signal - 0.1
-        self.vertices[::2, 1] = signal + 0.1
-        self.vertices[1::2, 1] = signal - 0.1
-        vbo = self.ctx.buffer(self.vertices.astype('f4').tobytes())
-        vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
-        vao.render(moderngl.TRIANGLE_STRIP)
+        self.vertices[::2, 1] = signal + 0.3
+        self.vertices[1::2, 1] = signal - 0.3
+
+        self.echoes.append(self.vertices[:])
+        if len(self.echoes) > 1:
+            self.echoes.popleft()
+        for i, sig in enumerate(self.echoes):
+            inv_i = len(self.echoes) - i
+            fade = pow(1.2, inv_i)
+            # TODO: add in some dimensions, divide in some others
+            #vertices = np.dstack([_X, sig + inv_i*0.07, _R/fade, _G/fade, _B/fade])
+            vbo = self.ctx.buffer(sig.astype('f4').tobytes())
+            vao = self.ctx.simple_vertex_array(prog, vbo, 'in_vert', 'in_color')
+            vao.render(moderngl.TRIANGLE_STRIP)
+
 
 
 # This is a copy of moderngl_window.run_window_config that adds some features:
