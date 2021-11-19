@@ -1,7 +1,12 @@
+import collections
+import dataclasses
+import enum
 from functools import reduce, lru_cache
 from typing import Mapping, Union, MutableMapping, Optional
 
 import numpy as np
+import typing
+
 import midi_lib
 import time
 import random
@@ -29,8 +34,6 @@ class State:
         self._value = value
 
 
-
-
 class Monitor:
     def __init__(self):
         self.data = np.zeros((1,1))
@@ -56,7 +59,6 @@ class Module:
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         raise Exception("not implemented")
-
 
     def __call__(self, ts: np.ndarray) -> np.ndarray:
         if Module.measure_time:
@@ -204,18 +206,29 @@ class Random(Module):
         return res
 
 
+def get_res(query_in, raising, f):
+    res = np.arcsin(query_in) / f
+    if not raising:
+        return np.pi / f - res
+    return res
+
+
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
-        self.prev = None
+        self.last_cumsum_value = State(initial_value=0)
 
     def out(self, ts):
+        dt = np.mean(ts[1:] - ts[:-1])
         amp = self.amplitude(ts)
         freq = self.frequency(ts)
         phase = self.phase(ts)
-        out = amp * np.sin((2 * np.pi * freq * ts) + phase)
+        cumsum = np.cumsum(freq * dt, axis=0) + self.last_cumsum_value.get()
+        # Cache last cumsum for next step.
+        self.last_cumsum_value.set(cumsum[-1, :])
+        out = amp * np.sin((2 * np.pi * cumsum) + phase)
         return out
 
 
@@ -280,6 +293,46 @@ class KernelGenerator(Module):
         frame_length, num_channels = lengths.shape
         out = np.array([norm([self.func(i) if i < int(l) else 0 for i in range(max_len)]) for l in lengths])
         return out.reshape((frame_length, max_len, num_channels))
+
+
+# TODO: WIP
+class FrameBuffer:
+    """Store multiple frames."""
+
+    def __init__(self):
+        self._buffer: Optional[collections.deque] = None
+
+    def push(self, frame: np.ndarray, max_frames_to_buffer: int):
+        buffer = self._update_buffer(frame.shape, max_frames_to_buffer)
+        buffer.append(frame)  # We append on the right.
+
+    def get(self) -> np.ndarray:
+        return np.concatenate(list(self.iter_buffered()), axis=0)
+
+    def iter_buffered(self) -> typing.Iterable[np.ndarray]:
+        assert self._buffer
+        return iter(self._buffer)
+
+    def _update_buffer(self, frame_shape: typing.Tuple[int, int], max_frames_to_buffer: int) -> collections.deque:
+        if self._buffer is None:
+            # Start out with just 0s
+            initial_buffer = [np.broadcast_to(0., frame_shape) for _ in range(max_frames_to_buffer)]
+            self._buffer = collections.deque(initial_buffer, maxlen=max_frames_to_buffer)
+            return self._buffer
+        if self._buffer.maxlen == max_frames_to_buffer:
+            return self._buffer
+        # If we land here, our buffer has a different `maxlen` than `max_frames_to_buffer`, and
+        # we need to either shrink or grow.
+        if self._buffer.maxlen > max_frames_to_buffer:  # Need to shrink
+            self._buffer = collections.deque(self._buffer[-max_frames_to_buffer:],
+                                             maxlen=max_frames_to_buffer)
+            return self._buffer
+        else:  # Need to grow
+            self._buffer = collections.deque(self._buffer, maxlen=max_frames_to_buffer)
+            while len(self._buffer) < max_frames_to_buffer:
+                self._buffer.appendleft(np.broadcast_to(0., frame_shape))
+            return self._buffer
+
 
 
 class KernelConvolver(Module):
@@ -411,7 +464,11 @@ class Multiplier(Module):  # TODO: variadic input
 class PlainMixer(Module):
     """Adds all input signals without changing their amplitudes"""
     def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
+        self.args = args
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        o = reduce(np.add, [inp(ts) for inp in self.args]) / (len(self.args))
+        return o / 3
 
 
 class MultiScaler(Module):
@@ -516,11 +573,105 @@ class BabiesFirstSynthie(Module):
         self.out = self.lowpass
 
 
+class FreqFactors(enum.Enum):
+    OCTAVE = 2.
+    STEP = 1.059463
+
+
+
+@dataclasses.dataclass()
+class StepSequencer(Module):
+
+    waveform_generator_cls: typing.Type[Module]
+    base_frequency: Parameter
+    speed: Parameter
+    melody: typing.Sequence[int]
+    steps: typing.Sequence[int]
+    gate: str
+
+    def __post_init__(self):
+        assert all(1 <= m <= 12 for m in self.melody), self.melody
+        self.seq_len = len(self.melody)
+        self.frequency = Parameter(1)
+        self.waveform_generator = self.waveform_generator_cls(frequency=self.frequency)
+
+    def copy(self, **kwargs):
+        return dataclasses.replace(self, **kwargs)
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        # TODO
+        speed = self.speed(ts)[0]
+        base_freq = self.base_frequency(ts)[0]
+        t = int(np.ceil(ts[0] * speed).round().astype(np.int)) % self.seq_len
+        m = self.melody[t]
+        gate = self.gate[t]
+        if gate == "H":
+            self.frequency.set(base_freq * FreqFactors.STEP.value ** m)
+            return self.waveform_generator(ts)
+        elif gate == "S":
+            return np.zeros_like(ts)
+
+
+class Reverb(Module):
+    def __init__(self, m, alpha: Module, max_decay: Module):
+        self.m = m
+        self.max_decay = max_decay
+        self.alpha = alpha
+        self.num_decays = 50
+        self.state = State(initial_value=None)
+
+    def out(self, ts: np.ndarray) -> np.ndarray:
+        if self.state.get() is None or self.state.get().maxlen != self.num_decays:
+            #num_samples, _ = ts.shape
+            #state_size = len(self.envelope) // num_samples
+            self.state.set(collections.deque((np.zeros_like(ts) for _ in range(self.num_decays)),
+                                             maxlen=self.num_decays))
+        d = self.state.get()
+
+        max_decay = self.max_decay(ts)[0, 0]
+        alpha = self.alpha(ts)[0, 0]
+        decays = np.array([1/max(1e-4, (2**(alpha*i))) for i in range(self.num_decays)]) * max_decay
+        o = self.m(ts) + sum(decay * s for decay, s in zip(reversed(decays), d))
+        d.append(o)
+        self.state.set(d)
+        return o
+
+
+
 class StepSequencing(Module):
     def __init__(self):
-        self.sin0 = SineSource(frequency=Parameter(
-            440, lo=200, hi=600, key="f", knob="r_mixer", clip=True))
-        self.out = self.sin0
+        self.base_freq = Parameter(220, lo=220/4, hi=440, knob="r_mixer_hi")
+        self.base_freq2 = Parameter(220, lo=220/4, hi=440, knob="r_mixer_mi")
+        self.speed = Parameter(2, lo=1, hi=10, knob="r_tempo")
+        self.step = StepSequencer(
+            SawSource,
+            self.base_freq,
+            self.speed,
+            melody=[1, 4, 1, 7, 10, 11, 12],
+            steps=[1, 1, 1, 1, 1, 1, 1],
+            # Gate mode:
+            # - H: hold for the step count,    XXXXXX
+            # - E: Sound for each step count   X X X
+            # - F: Sound for first step count  X
+            # - S: Skip, no sound
+            #gate='HSHSHS'
+            gate='HHHHSHH'
+        )
+
+        self.step2 = self.step.copy(melody=[1, 1, 1],
+                                    base_frequency=self.base_freq2,
+                                    wave_generator_cls=SineSource,
+                                    gate="HHH")
+
+        self.step3 = self.step.copy(melody=[7, 4, 7],
+                                    base_frequency=self.base_freq2)
+
+        self.mixer = PlainMixer(self.step, self.step2)#, self.step3)
+        self.lp = SimpleLowPass(self.mixer, window_size=Parameter(20, key="w"))
+        self.r = Reverb(self.lp,
+                        max_decay=Parameter(0.5, knob="fx2_1", lo=0, hi=0.8),
+                        alpha=Parameter(1, knob="fx2_2", lo=0.0001, hi=10))
+        self.out = self.r
 
 
 class TestModule(Module):
