@@ -11,7 +11,9 @@ https://github.com/moderngl/moderngl-window
 import argparse
 import collections
 import dataclasses
+import importlib
 import os.path
+import traceback
 
 import params_lib
 import filewatcher
@@ -61,6 +63,11 @@ def call_timers():
         del _TIMERS[i]
 
 
+def _get_modules_path():
+    current_dir = os.path.dirname(__file__)
+    return os.path.join(current_dir, "modules.py")
+
+
 class MakeSignal:
 
     def __init__(self, output_gen_class: str, sample_rate, num_channels):
@@ -73,16 +80,21 @@ class MakeSignal:
 
         # TODO: hot reload
         # TODO: adapt keys
-        avaiable_vars = vars(modules)
-        if output_gen_class not in avaiable_vars:
-            raise ValueError(f"Invalid class: {output_gen_class}")
-        print(f"Creating {output_gen_class}...")
-        self.output_gen = avaiable_vars[output_gen_class]()
+        self.output_gen_class = output_gen_class
+        self.output_gen = self._make_output_gen()
+
         self.params = self.output_gen.find_params()
+        self.state = self.output_gen.find_state()
+
+        self.modules_watcher = filewatcher.FileModifiedTimeTracker(
+            _get_modules_path())
+        self.modules_watcher.did_read_file_just_now()
 
         self.monitor = modules.Monitor()
         self.output_gen.attach_monitor(self.monitor)
 
+        # TODO(fab-jul): Push this into Parameter class,
+        #  and ditch params_* files.
         # Setup params to key_mapping stuff.
         self.params_file = f"params_{output_gen_class}.txt"
         if not os.path.isfile(self.params_file):
@@ -95,12 +107,52 @@ class MakeSignal:
         self.params_watcher = filewatcher.FileModifiedTimeTracker(
             self.params_file)
         self.key_mapping = {}
+
         # This will be called periodically in the event loop via a Timer.
         Timer(fire_every=1,
               repeats=True,
               callback=self.update_keymapping_from_params_file).register()
 
+        Timer(fire_every=1,
+              repeats=True,
+              callback=self.reload_modules).register()
+
         self.time_of_last_timer_update = 0.0
+
+    def _make_output_gen(self) -> modules.Module:
+        avaiable_vars = vars(modules)
+        if self.output_gen_class not in avaiable_vars:
+            raise ValueError(f"Invalid class: {self.output_gen_class}")
+        print(f"Creating {self.output_gen_class}...")
+        return avaiable_vars[self.output_gen_class]()
+
+    def reload_modules(self):
+        if not self.modules_watcher.has_changes:
+            return
+
+        self.modules_watcher.did_read_file_just_now()
+
+        print("Reading modules.py ...")
+        importlib.reload(modules)
+        try:
+            new_instance = self._make_output_gen()
+        except:
+            traceback.print_exc()
+            print(f"Blanked catch, not reloading...")
+            return
+
+        # Copy old state and params.
+        new_instance.copy_params_and_state_from(
+            src_params=self.params,
+            src_state=self.state)
+
+        # TODO
+        self.output_gen.detach_monitor()
+        self.output_gen = new_instance
+        self.params = self.output_gen.find_params()
+        self.state = self.output_gen.find_state()
+        self.output_gen.attach_monitor(self.monitor)
+
 
     def update_keymapping_from_params_file(self):
         if not self.params_watcher.has_changes:

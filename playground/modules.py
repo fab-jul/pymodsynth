@@ -1,4 +1,5 @@
 from functools import reduce, lru_cache
+from typing import Mapping, Union, MutableMapping
 
 import numpy as np
 import time
@@ -9,6 +10,24 @@ import scipy.signal
 
 # some modules need access to sampling_frequency
 SAMPLING_FREQUENCY = 44100
+
+
+class State:
+
+    def __init__(self, *, initial_value=None):
+        self._value = initial_value
+
+    @property
+    def is_set(self) -> bool:
+        return self._value is not None
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = value
+
+
 
 
 class Monitor:
@@ -37,6 +56,7 @@ class Module:
     def out(self, ts: np.ndarray) -> np.ndarray:
         raise Exception("not implemented")
 
+
     def __call__(self, ts: np.ndarray) -> np.ndarray:
         if Module.measure_time:
             t0 = time.time()
@@ -57,16 +77,37 @@ class Module:
     def detach_monitor(self):
         self.monitor = None
 
-    def find_params(self):
-        parameters = {}
-        for cls_name, cls_instance in vars(self).items():
-            for k, v in vars(cls_instance).items():
-                if isinstance(v, Parameter):
-                    param_name = f"{cls_name}.{k}"
+    def find_params(self) -> MutableMapping[str, "Parameter"]:
+        return self._find(Parameter)
+
+    def find_state(self) -> MutableMapping[str, "State"]:
+        return self._find(State)
+
+    def _find(self, cls, prefix=""):
+        result = {}
+        for var_name, var_instance in vars(self).items():
+            if isinstance(var_instance, cls):  # Top-level.
+                var_instance.name = f"{prefix}{var_name}"
+                result[var_name] = var_instance
+                continue
+            # TODO: We are not recursive, because we only
+            #  want top level stuff, but maybe we should reconsider.
+#            if isinstance(var_instance, Module):
+#
+#                # Recursion!
+#                result.update(var_instance._find(cls, prefix=f"{var_name}."))
+            for k, v in vars(var_instance).items():
+                if isinstance(v, cls):
+                    param_name = f"{var_name}.{k}"
                     v.name = param_name
-                    print(f"Found param: {param_name}")
-                    parameters[param_name] = v
-        return parameters
+                    result[param_name] = v
+        return result
+
+    # NOTE: We need to take the params and state, as we cannot
+    # find it anymore, since we have new classes when we call this!
+    def copy_params_and_state_from(self, src_params, src_state):
+        _copy(src=src_params, target=self.find_params())
+        _copy(src=src_state, target=self.find_state())
 
 
 class Constant(Module):
@@ -77,9 +118,18 @@ class Constant(Module):
         # TODO: consider: output a scalar or a vector?
         return np.ones_like(ts) * self.value
 
+    def __repr__(self):
+        return f'Constant(value={self.value})'
+
 
 # for now,
-Parameter = Constant
+class Parameter(Constant):
+
+    def set(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
 
 
 class Random(Module):
@@ -212,16 +262,16 @@ class SimpleLowPass(Module):
     """Simplest lowpass: average over previous <window> values"""
     def __init__(self, inp: Module, window_size: Module):
         self.window_size = window_size
-        self.last_signal = None
+        self.last_signal = State()
         self.inp = inp
 
     def out(self, ts):
-        if self.last_signal is None:
-            self.last_signal = np.zeros_like(ts)
+        if not self.last_signal.is_set:
+            self.last_signal.set(np.zeros_like(ts))
         num_samples, num_channels = ts.shape
         input = self.inp(ts)
         # Shape: (2*num_frames, num_channels)
-        full_signal = np.concatenate((self.last_signal, input), axis=0)
+        full_signal = np.concatenate((self.last_signal.get(), input), axis=0)
         window_sizes = self.window_size(ts)
         # TODO: Now we have one window size per frame. Seems reasonable?
         # Maybe we want to have a "MapsToSingleValueModule".
@@ -235,7 +285,7 @@ class SimpleLowPass(Module):
                 # TODO: Check out `oaconvolve`?
                 scipy.signal.convolve(full_signal[start_time_index:, channel_i],
                                       mean_filter, "valid"))
-        self.last_signal = input
+        self.last_signal.set(input)
         output = np.stack(result_per_channel, axis=-1)  # Back to correct shape
         assert output.shape == ts.shape, (output.shape, ts.shape, window_size, start_time_index)
         return output
@@ -413,5 +463,37 @@ class BabiesFirstSynthie(Module):
         self.modulator = SineModulator(self.src, Parameter(10))
         self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
         self.out = self.lowpass
+
+
+class StepSequencing(Module):
+    def __init__(self):
+        self.sin0 = SawSource(frequency=Parameter(440*(2/3)*(2/3)))
+        self.lowpass = SimpleLowPass(self.sin0, window_size=Parameter(2))
+        self.out = self.lowpass
+
+
+class TestModule(Module):
+    def __init__(self):
+        for i in range(100):
+            setattr(self, f"freq{i}", Parameter(i))
+            setattr(self, f"sin{i}", SawSource(frequency=getattr(self, f"freq{i}")))
+        self.lp = SimpleLowPass(self.sin0, window_size=Parameter(2))
+
+
+# TODO: Make type, it needs set() and get()
+ParamOrState = Union[Parameter, State]
+
+
+def _copy(src: Mapping[str, ParamOrState],
+          target: MutableMapping[str, ParamOrState]):
+    for k, param in src.items():
+        try:
+            target[k].set(param.get())
+        except KeyError as e:  # Some param disappeared -> ignore.
+            print(f"Caught: {e}")
+        else:
+            target.pop(k)
+    if target:  # Some params were not set -> ignore.
+        pass
 
 
