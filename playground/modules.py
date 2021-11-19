@@ -497,7 +497,7 @@ class ClickModulation(Module):
         #self.out = SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(TriangleSource(frequency=Parameter(1))), Parameter(1))))
 
 
-class TestModule(Module):
+class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
         self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
