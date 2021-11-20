@@ -12,7 +12,7 @@ import dataclasses
 import enum
 import itertools
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping, Optional, TypeVar, Callable, Sequence, Tuple, Any
+from typing import Mapping, Union, MutableMapping, Optional, TypeVar, Callable, Sequence, Tuple, Any, NamedTuple
 
 import numpy as np
 import typing
@@ -28,6 +28,14 @@ import scipy.signal
 SAMPLING_FREQUENCY = 44100
 
 
+class ClockSignal(NamedTuple):
+    time_stamps: np.ndarray
+    sample_indices: np.ndarray
+
+    def zeros(self):
+        return np.zeros_like(self.time_stamps)
+
+
 class Clock:
 
     def __init__(self, num_samples, num_channels, sample_rate):
@@ -36,14 +44,15 @@ class Clock:
         self.sample_rate = sample_rate
         self.i = 0
 
-        self.arange = np.arange(self.num_samples) / self.sample_rate  # Cache it.
+        self.arange = np.arange(self.num_samples, dtype=int)  # Cache it.
 
-    def __call__(self):
-        ts = self.i/self.sample_rate + self.arange
+    def __call__(self) -> ClockSignal:
+        sample_indices = self.i + self.arange
+        ts = sample_indices / self.sample_rate
         # Broadcast `ts` into (num_samples, num_channels)
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        self.i += 1
-        return ts
+        self.i += self.num_samples
+        return ClockSignal(ts, sample_indices)
 
 
 class State:
@@ -98,9 +107,9 @@ class Module:
         # Loop with `ts`
         all_ts = []
         for _ in range(num_steps):
-            ts = clock()
-            self(ts)
-            all_ts.append(ts)
+            clock_signal = clock()
+            self(clock_signal)
+            all_ts.append(clock_signal.time_stamps)
 
         # Reset back to fake collector
         self._set("collect", factory=collector_lib.FakeCollector)
@@ -116,14 +125,14 @@ class Module:
                 output.append((full_k, shift_collector_values))
         return np.concatenate(all_ts, axis=0), output
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
 
-    def __call__(self, ts: np.ndarray) -> np.ndarray:
+    def __call__(self, clock_signal: ClockSignal) -> np.ndarray:
         if Module.measure_time:
             t0 = time.time()
 
-        out = self.out(ts)
+        out = self.out(clock_signal)
 
         if Module.measure_time:
             t1 = time.time()
@@ -177,10 +186,12 @@ class Module:
 
 
 class Constant(Module):
+
     def __init__(self, value):
+        super().__init__()
         self.value = value
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         # TODO: sounds cool
         # num_samples, num_channels = ts.shape
         # if abs(self.previous_value - self.value) > 1e-4:
@@ -189,7 +200,7 @@ class Constant(Module):
         #     print(self.previous_value, self.value, out[:10])
         # else:
         #     out = np.ones_like(ts) * self.value
-        out = np.broadcast_to(self.value, ts.shape)
+        out = np.broadcast_to(self.value, clock_signal.time_stamps.shape)
         return out
 
     def __repr__(self):
@@ -260,13 +271,14 @@ class Parameter(Constant):
 class Random(Module):
     """Output a constant random amplitude until a random change event changes the amplitude. Best explanation ever."""
     def __init__(self, max_amplitude, change_chance):
+        super().__init__()
         self.max_amplitude = max_amplitude
         self.p = change_chance
         self.amp = random.random() * self.max_amplitude
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         # random experiment
-        frame_length, num_channels = ts.shape
+        frame_length, num_channels = clock_signal.time_stamps.shape
         res = np.empty((0, num_channels))
         while len(res) < frame_length:
             chance_in_frame = 1 - pow(1 - self.p, frame_length - len(res))
@@ -287,16 +299,17 @@ def get_res(query_in, raising, f):
 
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+        super().__init__()
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
         self.last_cumsum_value = State(initial_value=0)
 
-    def out(self, ts):
-        dt = np.mean(ts[1:] - ts[:-1])
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
+    def out(self, clock_signal: ClockSignal):
+        dt = np.mean(clock_signal.time_stamps[1:] - clock_signal.time_stamps[:-1])
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
         cumsum = np.cumsum(freq * dt, axis=0) + self.last_cumsum_value.get()
         # Cache last cumsum for next step.
         self.last_cumsum_value.set(cumsum[-1, :])
@@ -306,42 +319,47 @@ class SineSource(Module):
 
 class SawSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+        super().__init__()
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
 
-    def out(self, ts):
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
+    def out(self, clock_signal: ClockSignal):
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
         period = 1 / freq
-        out = 2 * (ts/period + phase - np.floor(1/2 + ts/period + phase)) * amp
+        out = 2 * (clock_signal.time_stamps/period + phase
+                   - np.floor(1/2 + clock_signal.time_stamps/period + phase)) * amp
         return out
 
 
 class TriangleSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+        super().__init__()
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
         period = 1 / freq
-        out = (2 * np.abs(2 * (ts/period + phase - np.floor(1/2 + ts/period + phase))) - 1) * amp
+        out = (2 * np.abs(2 * (clock_signal.time_stamps/period + phase
+                               - np.floor(1/2 + clock_signal.time_stamps/period + phase))) - 1) * amp
         return out
 
 
 class SineModulator(Module):
     def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
+        super().__init__()
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
 
-    def out(self, ts):
-        out = self.carrier(ts) * self.inp(ts)
+    def out(self, clock_signal: ClockSignal):
+        out = self.carrier(clock_signal) * self.inp(clock_signal)
         return out
 
 
@@ -354,13 +372,14 @@ class KernelGenerator(Module):
     """
 
     def __init__(self, func, length: Module):
+        super().__init__()
         self.func = func  # function from t to [-1, 1]
         self.length = length  # kernel length, a module
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         norm = lambda v: v / np.linalg.norm(v)
         # we dont need the inp
-        lengths = self.length(ts)  # shape (512, 1)
+        lengths = self.length(clock_signal)  # shape (512, 1)
         max_len = int(np.max(lengths))
         frame_length, num_channels = lengths.shape
         out = np.array([norm([self.func(i) if i < int(l) else 0 for i in range(max_len)]) for l in lengths])
@@ -413,24 +432,25 @@ class KernelConvolver(Module):
     TODO: some python loops seem unavoidable, but maybe there are numpy formulations to save effort.
     """
     def __init__(self, inp: Module, kernel_generator: Module):
+        super().__init__()
         self.inp = inp
         self.kernel_generator = kernel_generator
         self.last_signal = None
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         if self.last_signal is None:
-            self.last_signal = np.zeros_like(ts)
-        num_samples, num_channels = ts.shape
-        inp = self.inp(ts)
+            self.last_signal = clock_signal.zeros()
+        num_samples, num_channels = clock_signal.time_stamps.shape
+        inp = self.inp(clock_signal)
         full_signal = np.concatenate((self.last_signal, inp), axis=0)
         self.last_signal = inp
-        kernels = self.kernel_generator(ts)
+        kernels = self.kernel_generator(clock_signal)
         # shape must be (frame_length, max_kernel_size, num_channels)
         frame_length, max_kernel_size, num_channels = kernels.shape
         slices = np.concatenate([full_signal[i:i+max_kernel_size, :] for i in range(frame_length - max_kernel_size + 1, frame_length * 2 - max_kernel_size + 1)])
         slices = slices.reshape(kernels.shape)
         res_block = np.tensordot(slices, kernels, axes=[[1, 2], [1, 2]])
-        res = np.diag(res_block).reshape(ts.shape)
+        res = np.diag(res_block).reshape(clock_signal.time_stamps.shape)
         return res
 
 
@@ -438,22 +458,23 @@ class KernelConvolver(Module):
 class SimpleLowPass(Module):
     """Simplest lowpass: average over previous <window> values"""
     def __init__(self, inp: Module, window_size: Module):
+        super().__init__()
         self.window_size = window_size
         self.last_signal = State()
         self.inp = inp
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         if not self.last_signal.is_set:
-            self.last_signal.set(np.zeros_like(ts))
-        num_samples, num_channels = ts.shape
-        input = self.inp(ts)
+            self.last_signal.set(clock_signal.zeros())
+        num_samples, num_channels = clock_signal.time_stamps.shape
+        input = self.inp(clock_signal)
         # Shape: (2*num_frames, num_channels)
         full_signal = np.concatenate((self.last_signal.get(), input), axis=0)
-        window_sizes = self.window_size(ts)
+        window_sizes = self.window_size(clock_signal)
         # TODO: Now we have one window size per frame. Seems reasonable?
         # Maybe we want to have a "MapsToSingleValueModule".
         window_size: int = max(1, round(float(np.mean(window_sizes))))
-        mean_filter = np.ones((window_size,), dtype=ts.dtype) / window_size
+        mean_filter = np.ones((window_size,), dtype=clock_signal.time_stamps.dtype) / window_size
         result_per_channel = []
         start_time_index = num_samples - window_size + 1
         # Note that this for loop si over at most 2 elements!
@@ -464,7 +485,8 @@ class SimpleLowPass(Module):
                                       mean_filter, "valid"))
         self.last_signal.set(input)
         output = np.stack(result_per_channel, axis=-1)  # Back to correct shape
-        assert output.shape == ts.shape, (output.shape, ts.shape, window_size, start_time_index)
+        assert output.shape == clock_signal.time_stamps.shape, (
+            output.shape, clock_signal.time_stamps.shape, window_size, start_time_index)
         return output
 
 
@@ -473,31 +495,33 @@ class ShapeModulator(Module):
     Modulate a given shape onto clicks in time domain. Nearby clicks will both get the shape, so they may overlap.
     """
     def __init__(self, inp: Module, shape: Module):
+        super().__init__()
         self.last_signal = None
         self.inp = inp
         self.shape = shape
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         if self.last_signal is None:
-            self.last_signal = np.zeros_like(ts)
-        click_signal = self.inp(ts)
+            self.last_signal = clock_signal.zeros()
+        click_signal = self.inp(clock_signal)
         # like in SimpleLowpass, we really want a different window for every click. but for the moment,
         # we just use a single window for the whole frame
-        shape = self.shape(ts)
+        shape = self.shape(clock_signal)
         full_click_signal = np.concatenate((self.last_signal, click_signal), axis=0)
         out = scipy.signal.convolve(full_click_signal, shape, mode="valid")
         self.last_signal = click_signal
-        return out[-ts.shape[0]:, :]
+        return out[-clock_signal.time_stamps.shape[0]:, :]
 
 
 class ShapeExp(Module):
     """Gives a signal of length shape_length"""
     def __init__(self, shape_length: int, decay=2.0, amplitude=1.0):
+        super().__init__()
         self.shape_length = shape_length
         self.decay = decay
         self.amplitude = amplitude
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         shape = np.array([self.amplitude / pow(self.decay, i) for i in range(self.shape_length)]).reshape(-1,1)
         return shape
 
@@ -505,10 +529,11 @@ class ShapeExp(Module):
 class Lift(Module):
     """Lifts a signal from [-1,1] to [0,1]"""
     def __init__(self, inp: Module):
+        super().__init__()
         self.inp = inp
 
-    def out(self, ts):
-        res = self.inp(ts)
+    def out(self, clock_signal: ClockSignal):
+        res = self.inp(clock_signal)
         return res / 2 + 0.5
 
 
@@ -517,29 +542,32 @@ class ScalarMultiplier(Module):
     between [0,440]"""
     # we could still pass a module as the value, instead of a constant float..
     def __init__(self, inp: Module, value: float):
+        super().__init__()
         self.inp = inp
         self.value = value
 
-    def __call__(self, ts):
-        return self.inp(ts) * self.value
+    def __call__(self, clock_signal: ClockSignal):
+        return self.inp(clock_signal) * self.value
 
 
 class Multiplier(Module):  # TODO: variadic input
     def __init__(self, inp1: Module, inp2: Module):
+        super().__init__()
         self.inp1 = inp1
         self.inp2 = inp2
 
-    def out(self, ts):
-        return self.inp1(ts) * self.inp2(ts)
+    def out(self, clock_signal: ClockSignal):
+        return self.inp1(clock_signal) * self.inp2(clock_signal)
 
 
 class PlainMixer(Module):
     """Adds all input signals without changing their amplitudes"""
     def __init__(self, *args):
+        super().__init__()
         self.args = args
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-        o = reduce(np.add, [inp(ts) for inp in self.args]) / (len(self.args))
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        o = reduce(np.add, [inp(clock_signal) for inp in self.args]) / (len(self.args))
         return o / 3
 
 
@@ -557,16 +585,17 @@ class ClickSource(Module):
     One 1 per num_samples
     """
     def __init__(self, num_samples: Module):
+        super().__init__()
         self.num_samples = num_samples
         self.counter = 0
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-        num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
-        out = np.zeros_like(ts)
-        for i in range(int(np.ceil((ts.shape[0]-self.counter) / num_samples))):
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        num_samples = int(np.mean(self.num_samples(clock_signal))) # hack to have same blocksize per frame, like Lowpass...
+        out = clock_signal.zeros()
+        for i in range(int(np.ceil((clock_signal.time_stamps.shape[0]-self.counter) / num_samples))):
             out[self.counter + i * num_samples, :] = 1
-        self.counter += num_samples - (ts.shape[0] % num_samples)
-        self.counter = self.counter % ts.shape[0]
+        self.counter += num_samples - (clock_signal.time_stamps.shape[0] % num_samples)
+        self.counter = self.counter % clock_signal.time_stamps.shape[0]
         self.counter = self.counter % num_samples
 
         self.counter = self.collect("counter") << self.counter
@@ -586,7 +615,7 @@ def test_module(module: Module, num_frames=5, frame_length=2048, num_channels=1,
     for i in range(num_frames):
         ts = (i*frame_length + np.arange(frame_length)) / sampling_frequency
         ts = ts[..., np.newaxis] * np.ones((1,))
-        out = module(ts)
+        out = module(ts)  # TODO: USe clocksignal
         res.append(out)
     res = np.concatenate(res)
     plt.plot(res)
@@ -612,6 +641,7 @@ def kernel_test():
 
 class ClickModulation(Module):
     def __init__(self):
+        super().__init__()
         #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
         self.wild_triangles = PlainMixer(*[TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3)])
         self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
@@ -628,6 +658,7 @@ class ClickModulation(Module):
 
 class BabiesFirstSynthie(Module):
     def __init__(self):
+        super().__init__()
         self.lfo = SineSource(Parameter(1))
         self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
         self.sin1 = SineSource(frequency=Parameter(440))
@@ -661,6 +692,7 @@ class StepSequencer(Module):
     gate: str
 
     def __post_init__(self):
+        self.collect = collector_lib.FakeCollector()
         #assert all(1 <= m <= 12 for m in self.melody), self.melody
         self.seq_len = len(self.melody)
         self.frequency = Parameter(1)
@@ -672,45 +704,44 @@ class StepSequencer(Module):
     def copy(self, **kwargs):
         return dataclasses.replace(self, **kwargs)
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-
-
-        
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         # TODO
-        speed = self.speed(ts)[0]
-        base_freq = self.base_frequency(ts)[0]
-        self.collect("quantized_ts") << np.ceil(ts*speed).round().astype(int) % float(self.seq_len)
+        ts = clock_signal.time_stamps
+        speed = self.speed(clock_signal)[0]
+        base_freq = self.base_frequency(clock_signal)[0]
+        #self.collect("quantized_ts") << np.ceil(ts*speed).round().astype(int) % float(self.seq_len)
         # TODO: this is improper...
         t = int(np.ceil(ts[0] * speed).round().astype(int)) % self.seq_len
         m = self.melody[t]
         gate = self.gate[t]
         if gate == "H":
             self.frequency.set(base_freq * FreqFactors.STEP.value ** m)
-            return self.waveform_generator(ts)
+            return self.waveform_generator(clock_signal)
         elif gate == "S":
-            return np.zeros_like(ts)
+            return clock_signal.zeros()
 
 
 class Reverb(Module):
     def __init__(self, m, alpha: Module, max_decay: Module):
+        super().__init__()
         self.m = m
         self.max_decay = max_decay
         self.alpha = alpha
         self.num_decays = 50
         self.state = State(initial_value=None)
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         if self.state.get() is None or self.state.get().maxlen != self.num_decays:
             #num_samples, _ = ts.shape
             #state_size = len(self.envelope) // num_samples
-            self.state.set(collections.deque((np.zeros_like(ts) for _ in range(self.num_decays)),
+            self.state.set(collections.deque((clock_signal.zeros() for _ in range(self.num_decays)),
                                              maxlen=self.num_decays))
         d = self.state.get()
 
-        max_decay = self.max_decay(ts)[0, 0]
-        alpha = self.alpha(ts)[0, 0]
+        max_decay = self.max_decay(clock_signal)[0, 0]
+        alpha = self.alpha(clock_signal)[0, 0]
         decays = np.array([1/max(1e-4, (2**(alpha*i))) for i in range(self.num_decays)]) * max_decay
-        o = self.m(ts) + sum(decay * s for decay, s in zip(reversed(decays), d))
+        o = self.m(clock_signal) + sum(decay * s for decay, s in zip(reversed(decays), d))
         d.append(o)
         self.state.set(d)
         return o
@@ -719,6 +750,7 @@ class Reverb(Module):
 
 class StepSequencing(Module):
     def __init__(self):
+        super().__init__()
         self.base_freq = Parameter(220, lo=220/4, hi=440, knob="r_mixer_hi")
         self.base_freq2 = Parameter(220/16, lo=220/16, hi=440, knob="r_mixer_mi")
         self.speed = Parameter(2, lo=1, hi=10, knob="r_tempo")
@@ -758,6 +790,7 @@ class StepSequencing(Module):
 
 class TestModule(Module):
     def __init__(self):
+        super().__init__()
         for i in range(100):
             setattr(self, f"freq{i}", Parameter(i))
             setattr(self, f"sin{i}", SawSource(frequency=getattr(self, f"freq{i}")))
@@ -786,6 +819,10 @@ class FutureCache:
 
 
 class EnvelopeGenerator:
+    pass
+
+
+class TriggerMaker(Module):
     pass
 
 

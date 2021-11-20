@@ -216,9 +216,9 @@ class MakeSignal:
         if status:
             print(status, file=sys.stderr)
 
-        ts = self.clock()
+        clock_signal = self.clock()
 
-        outdata[:] = self.output_gen(ts)
+        outdata[:] = self.output_gen(clock_signal)
 
         if EVENT_QUEUE:
             s = time.time()
@@ -257,7 +257,6 @@ class MakeSignal:
         # if random.random() > 0.99:
         #     self.output_gen.detach_monitor()
         #     self.output_gen.sin0.attach_monitor(self.monitor)
-        self.i += num_samples
 
 
 def start_sound(output_gen_class: str, device: int):
