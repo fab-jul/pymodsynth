@@ -1,7 +1,8 @@
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping
+from typing import Mapping, Union, MutableMapping, Optional
 
 import numpy as np
+import midi_lib
 import time
 import random
 
@@ -90,17 +91,8 @@ class Module:
                 var_instance.name = f"{prefix}{var_name}"
                 result[var_name] = var_instance
                 continue
-            # TODO: We are not recursive, because we only
-            #  want top level stuff, but maybe we should reconsider.
-#            if isinstance(var_instance, Module):
-#
-#                # Recursion!
-#                result.update(var_instance._find(cls, prefix=f"{var_name}."))
-            for k, v in vars(var_instance).items():
-                if isinstance(v, cls):
-                    param_name = f"{var_name}.{k}"
-                    v.name = param_name
-                    result[param_name] = v
+            if isinstance(var_instance, Module):
+                result.update(var_instance._find(cls, prefix=f"{var_name}."))
         return result
 
     # NOTE: We need to take the params and state, as we cannot
@@ -115,21 +107,80 @@ class Constant(Module):
         self.value = value
 
     def out(self, ts):
-        # TODO: consider: output a scalar or a vector?
-        return np.ones_like(ts) * self.value
+        # TODO: sounds cool
+        # num_samples, num_channels = ts.shape
+        # if abs(self.previous_value - self.value) > 1e-4:
+        #     out = (np.linspace(self.previous_value, self.value, num_samples).reshape(-1, 1) *
+        #            np.ones((num_channels,)))
+        #     print(self.previous_value, self.value, out[:10])
+        # else:
+        #     out = np.ones_like(ts) * self.value
+        out = np.broadcast_to(self.value, ts.shape)
+        return out
 
     def __repr__(self):
-        return f'Constant(value={self.value})'
-
-
-# for now,
-class Parameter(Constant):
+        return f'{self.__class__.__name__}(value={self.value})'
 
     def set(self, value):
         self.value = value
 
+    def inc(self, diff):
+        """Increment value by `diff`."""
+        self.set(self.value + diff)
+
     def get(self):
         return self.value
+
+
+class Parameter(Constant):
+
+    def __init__(self,
+                 value: float,
+                 lo: Optional[float] = None,
+                 hi: Optional[float] = None,
+                 key: Optional[str] = None,
+                 knob: Optional[midi_lib.KnobConvertible] = None,
+                 shift_multiplier: float = 10,
+                 clip: bool = False):
+        """Create Parameter.
+
+        NOTES:
+        - `lo`, `hi` are always used for knobs, but only used for `key` if `clip=True`.
+          This is because knobs have a range of 0-127, and we use `lo`, `hi` to map to that range.
+
+        Args:
+            value: Initial value
+            lo: Lowest sane value. Defaults to 0.1 * value.
+            hi: Highest sane value. Defaults to 1.9 * value.
+            key: If given, a key on the keyboard that controls this parameter. Example: "f".
+            knob: If given, a knob on a Midi controller that controls this parameter.
+            shift_multiplier: Only used if `key` is set, in which case this sets how much
+              more we change the parameter if SHIFT is pressed on the keyboard.
+            clip: If True, clip to [lo, hi] in `set`.
+        """
+        super().__init__(value)
+        if not lo:
+            lo = 0.1 * value
+        if not hi:
+            hi = 1.9 * value
+        if hi < lo:
+            raise ValueError
+        self.lo, self.hi = lo, hi
+        self.span = self.hi - self.lo
+        self.key = key
+        self.knob = knob
+        self.shift_multiplier = shift_multiplier
+        self.clip = clip
+
+    def set(self, value):
+        if self.clip:
+            self.value = np.clip(value, self.lo, self.hi)
+        else:
+            self.value = value
+
+    def set_relative(self, rel_value: float):
+        """Set with value in [0, 1], and we map to [lo, hi]."""
+        self.set(self.lo + self.span * rel_value)
 
 
 class Random(Module):
@@ -158,6 +209,7 @@ class SineSource(Module):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
+        self.prev = None
 
     def out(self, ts):
         amp = self.amplitude(ts)
@@ -456,7 +508,6 @@ class BabiesFirstSynthie(Module):
 
         self.changingsine0 = Multiplier(self.sin0, self.lfo)
         self.changingsine1 = SineModulator(self.sin0, Parameter(1))
-         #above 2 should be equal
         self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
 
         self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
@@ -467,9 +518,9 @@ class BabiesFirstSynthie(Module):
 
 class StepSequencing(Module):
     def __init__(self):
-        self.sin0 = SawSource(frequency=Parameter(440*(2/3)*(2/3)))
-        self.lowpass = SimpleLowPass(self.sin0, window_size=Parameter(2))
-        self.out = self.lowpass
+        self.sin0 = SineSource(frequency=Parameter(
+            440, lo=200, hi=600, key="f", knob="r_mixer", clip=True))
+        self.out = self.sin0
 
 
 class TestModule(Module):

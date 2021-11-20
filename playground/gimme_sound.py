@@ -10,6 +10,7 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
+import midi_lib
 import dataclasses
 import importlib
 import os.path
@@ -70,54 +71,52 @@ def _get_modules_path():
 
 class MakeSignal:
 
-    def __init__(self, output_gen_class: str, sample_rate, num_channels):
+    def __init__(self, output_gen_class: str, sample_rate, num_channels,
+                 signal_window: live_graph_modern_gl.SignalWindow):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
         self.i = 0
         self.last_t = time.time()
         self.t0 = -1
+        self.signal_window = signal_window
 
-        # TODO: hot reload
-        # TODO: adapt keys
+        # Set defaults.
+        self.params: typing.Dict[str, modules.Parameter] = {}
+        self.state: typing.Dict[str, modules.State] = {}
+        self.key_mapping: typing.Dict[str, modules.Parameter] = {}
+        self.knob_mapping: typing.Dict[midi_lib.Knob, modules.Parameter] = {}
+
+        # TODO: make a flag!
+        # TODO: Support reloading
+        try:
+            self.known_knobs = midi_lib.KnownKnobs.from_file("traktor_kontrol_knobs.txt")
+        except FileNotFoundError as e:
+            print(f"ERROR: {e}")
+            self.known_knobs = midi_lib.KnownKnobs({})
+
+        self.monitor = modules.Monitor()
+
         self.output_gen_class = output_gen_class
         self.output_gen = self._make_output_gen()
-
-        self.params = self.output_gen.find_params()
-        self.state = self.output_gen.find_state()
 
         self.modules_watcher = filewatcher.FileModifiedTimeTracker(
             _get_modules_path())
         self.modules_watcher.did_read_file_just_now()
 
-        self.monitor = modules.Monitor()
-        self.output_gen.attach_monitor(self.monitor)
-
-        # TODO(fab-jul): Push this into Parameter class,
-        #  and ditch params_* files.
-        # Setup params to key_mapping stuff.
-        self.params_file = f"params_{output_gen_class}.txt"
-        if not os.path.isfile(self.params_file):
-            print(f"Creating {self.params_file}...")
-            # Create initial dump.
-            # TODO: have to update when generator function changes!
-            param_specs = [params_lib.ParamSpec(name) for name in
-                           self.params.keys()]
-            params_lib.write_params(param_specs, self.params_file)
-        self.params_watcher = filewatcher.FileModifiedTimeTracker(
-            self.params_file)
-        self.key_mapping = {}
-
-        # This will be called periodically in the event loop via a Timer.
-        Timer(fire_every=1,
-              repeats=True,
-              callback=self.update_keymapping_from_params_file).register()
+        self.midi_controller: typing.Optional[midi_lib.Controller] = None
+        try:
+            self.midi_controller = midi_lib.Controller.make()
+        except midi_lib.ControllerError as e:
+            print(f"Caught: {e}")
 
         Timer(fire_every=1,
               repeats=True,
               callback=self.reload_modules).register()
 
         self.time_of_last_timer_update = 0.0
+
+        self._set_output_gen(self.output_gen)
 
     def _make_output_gen(self) -> modules.Module:
         avaiable_vars = vars(modules)
@@ -146,30 +145,44 @@ class MakeSignal:
             src_params=self.params,
             src_state=self.state)
 
-        # TODO
+        self._set_output_gen(new_instance)
+
+    def _set_output_gen(self, output_gen: modules.Module):
+        """Called on init and when modules.py changes."""
         self.output_gen.detach_monitor()
-        self.output_gen = new_instance
+        self.output_gen = output_gen
         self.params = self.output_gen.find_params()
         self.state = self.output_gen.find_state()
         self.output_gen.attach_monitor(self.monitor)
+        self._update_key_mapping()
+        self._update_knob_mapping()
 
+    def _update_key_mapping(self):
+        self.key_mapping = {param.key: param
+                            for _, param in self.params.items()
+                            if param.key}
 
-    def update_keymapping_from_params_file(self):
-        if not self.params_watcher.has_changes:
-            # No changes, nothing to read!
+        print("Did update keymapping, keys=", self.key_mapping.keys())
+        self.signal_window.set_interesting_keys(self.key_mapping.keys())
+
+    def _update_knob_mapping(self):
+        if not self.midi_controller:
             return
-        print("Reading updated params...")
-        param_specs = params_lib.parse_params(self.params_file)
-        self.key_mapping = {
-            param_spec.key: param_spec for param_spec in param_specs
-            if param_spec.key is not None}
 
-        if window := live_graph_modern_gl.get_current_window():
-            window.set_interesting_keys(self.key_mapping.keys())
-            self.params_watcher.did_read_file_just_now()  # Signal that we ingested changes.
-        else:
-            print("WARN: No window available!")
+        self.knob_mapping = {self.known_knobs.get(param.knob): param
+                             for _, param in self.params.items()
+                             if param.knob}
 
+        self.midi_controller.reset_interesting_knobs()
+        for knob in self.knob_mapping:
+            self.midi_controller.register_interesting_knob(knob)
+
+        print("Did update interesting knobs to", self.midi_controller.interesting_knobs)
+
+    def _process_midi_controller_events(self):
+        if controller := self.midi_controller:
+            for event in controller.read_events():
+                EVENT_QUEUE.append(event)
 
     def callback(self, outdata: np.ndarray, num_samples: int, timestamps, status):
         """Callback.
@@ -188,6 +201,7 @@ class MakeSignal:
         More notes:
             Can raise `CallbackStop()` to finish the stream.
         """
+        self._process_midi_controller_events()
         t = timestamps.outputBufferDacTime  # TODO(fab-jul): Use to sync.
         # For performance, only update timers at most 1 per second
         if t - self.time_of_last_timer_update >= 1.:
@@ -202,53 +216,45 @@ class MakeSignal:
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
         assert ts.shape == (num_samples, self.num_channels)
         outdata[:] = self.output_gen(ts)
+
         if EVENT_QUEUE:
             s = time.time()
             # Ingest all events.
             while EVENT_QUEUE:
-                event = EVENT_QUEUE.pop()
-                if type(event) == live_graph_modern_gl.KeyAndMouseEvent:
-                    #event: live_graph_modern_gl.KeyAndMouseEvent = EVENT_QUEUE.pop()
+                event = EVENT_QUEUE.popleft()  # We are a queue, pop from the left, append to the right.
+                if isinstance(event, live_graph_modern_gl.KeyAndMouseEvent):
                     # Unpacking is supposedly faster than name access.
                     dx, dy, keys, shift_is_on = event
                     # The first key needs left/right movement ("x"),
                     # the second up/down ("y"). NOTE: we only support 2 keys.
                     for offset, k in zip((dx, dy), keys):
-                        param, multiplier, lo, hi, _ = self.key_mapping[k]
-                        if shift_is_on:
-                            multiplier *= 10
-                        out = self.params[param].value + (offset * multiplier)
-                        self.params[param].value = np.clip(out, lo, hi)
-                #
-                if type(event) == live_graph_modern_gl.SwitchMonitorEvent:
+                        param: modules.Parameter = self.key_mapping[k]
+                        multiplier = param.shift_multiplier if shift_is_on else 1
+                        param.inc(offset * multiplier)
+
+                elif isinstance(event, midi_lib.KnobEvent):
+                    knob, rel_value = event
+                    param: modules.Parameter = self.knob_mapping[knob]
+                    param.set_relative(rel_value)
+
+                # TODO: Clean up
+                elif isinstance(event, live_graph_modern_gl.SwitchMonitorEvent):
+                    print("Attaching to sin")
                     #event2 = live_graph_modern_gl.SwitchMonitorEvent = EVENT_QUEUE.pop()
                     self.output_gen.detach_monitor()
-                    self.output_gen.sin0.attach_monitor(self.monitor)
-                #
-            duration = time.time() - s
-            if duration > 1e-4:
-                print("WARN: slow event ingestion!")
-        if window := live_graph_modern_gl.get_current_window():
-            window.set_signal(self.monitor.get_data())
+                    self.output_gen.sin0.frequency.attach_monitor(self.monitor)
+
+                else:
+                    raise TypeError(event)
+
+#            duration = time.time() - s
+#            if duration > 1e-4:
+#                print("WARN: slow event ingestion!")
+        self.signal_window.set_signal(self.monitor.get_data())
         # if random.random() > 0.99:
         #     self.output_gen.detach_monitor()
         #     self.output_gen.sin0.attach_monitor(self.monitor)
         self.i += num_samples
-
-
-def start_app(num_samples: int, num_channels: int):
-    try:
-        live_graph_modern_gl.run_window_config(
-            live_graph_modern_gl.RandomPlot,
-            event_queue=EVENT_QUEUE,
-            num_samples=num_samples,
-            num_channels=num_channels)
-    except live_graph_modern_gl.QuitException:
-        # Raised when the window catches the quit event.
-        pass
-    except KeyboardInterrupt:
-        pass
-    print("Window did close.")
 
 
 def start_sound(output_gen_class: str, device: int):
@@ -259,15 +265,24 @@ def start_sound(output_gen_class: str, device: int):
     # TODO(fab-jul): Investigate how large we can make this.
     num_samples = 2048
     num_channels = 1
+
+    # We first make a window, so that we always have that.
+    window, timer, signal_window = live_graph_modern_gl.prepare_window(
+        EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
+
+    # Now we make the signal maker.
     sin = MakeSignal(output_gen_class=output_gen_class,
                      sample_rate=sample_rate,
-                     num_channels=num_channels)
+                     num_channels=num_channels,
+                     signal_window=signal_window)
 
+    # Start audio stream.
     with sd.OutputStream(
             device=device, blocksize=num_samples,
             latency="low",
             channels=num_channels, callback=sin.callback, samplerate=sample_rate):
-        start_app(num_samples, num_channels)
+        # Start window event loop.
+        live_graph_modern_gl.run_window_loop(window, timer)
 
 
 def main():
