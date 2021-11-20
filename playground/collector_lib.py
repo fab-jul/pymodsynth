@@ -15,6 +15,12 @@ class _ShiftCollector:
         return f"_ShiftCollect({self.name}: {self.cache})"
 
 
+class _FakeShiftCollector(_ShiftCollector):
+
+    def __lshift__(self, other):
+        return other
+
+
 class Collector:
 
     def __init__(self):
@@ -38,7 +44,7 @@ class FakeCollector(Collector):
     """A collector that raises an exception when it's used"""
 
     def __call__(self, _):
-        raise ValueError("Collector not active!")
+        return _FakeShiftCollector("fake")
 
 
 def test():
