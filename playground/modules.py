@@ -1,8 +1,18 @@
 import collections
+import pprint
+import re
+import warnings
+
+import plot_lib
+
+import matplotlib.pyplot as plt
+
+import collector_lib
 import dataclasses
 import enum
+import itertools
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping, Optional
+from typing import Mapping, Union, MutableMapping, Optional, TypeVar, Callable, Sequence, Tuple, Any
 
 import numpy as np
 import typing
@@ -16,6 +26,24 @@ import scipy.signal
 
 # some modules need access to sampling_frequency
 SAMPLING_FREQUENCY = 44100
+
+
+class Clock:
+
+    def __init__(self, num_samples, num_channels, sample_rate):
+        self.num_samples = num_samples
+        self.num_channels = num_channels
+        self.sample_rate = sample_rate
+        self.i = 0
+
+        self.arange = np.arange(self.num_samples) / self.sample_rate  # Cache it.
+
+    def __call__(self):
+        ts = self.i/self.sample_rate + self.arange
+        # Broadcast `ts` into (num_samples, num_channels)
+        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
+        self.i += 1
+        return ts
 
 
 class State:
@@ -47,6 +75,9 @@ class Monitor:
         return self.data
 
 
+T = TypeVar("T")
+
+
 class Module:
     """
     Module :: Signal -> Signal, in particular:
@@ -56,6 +87,34 @@ class Module:
     A subclass should overwrite self.out, respecting its signature.
     """
     measure_time = False
+
+    def __init__(self):
+        self.collect = collector_lib.FakeCollector()
+
+    def collect_data(self, num_steps, clock: Clock) -> Tuple[np.ndarray, Sequence[Tuple[str, Sequence[Any]]]]:
+        # Set collect to a useful instance.
+        collectors = self._set("collect", factory=collector_lib.Collector)
+
+        # Loop with `ts`
+        all_ts = []
+        for _ in range(num_steps):
+            ts = clock()
+            self(ts)
+            all_ts.append(ts)
+
+        # Reset back to fake collector
+        self._set("collect", factory=collector_lib.FakeCollector)
+
+        non_empty_collectors = {k: collector for k, collector in collectors.items() if collector}
+        if not non_empty_collectors:
+            raise ValueError("No module collected data!")
+
+        output = []
+        for k, collector in non_empty_collectors.items():
+            for shift_collector_name, shift_collector_values in collector:
+                full_k = (k + "." + shift_collector_name).strip(".")
+                output.append((full_k, shift_collector_values))
+        return np.concatenate(all_ts, axis=0), output
 
     def out(self, ts: np.ndarray) -> np.ndarray:
         raise Exception("not implemented")
@@ -86,8 +145,10 @@ class Module:
     def find_state(self) -> MutableMapping[str, "State"]:
         return self._find(State)
 
-    def _find(self, cls, prefix=""):
+    def _find(self, cls, prefix="", include_root=False):
         result = {}
+        if prefix == "" and include_root and isinstance(self, cls):
+            result[""] = self
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
                 var_instance.name = f"{prefix}{var_name}"
@@ -96,6 +157,17 @@ class Module:
             if isinstance(var_instance, Module):
                 result.update(var_instance._find(cls, prefix=f"{var_name}."))
         return result
+
+    def _set(self, var_name: str, factory: Callable[[], T]) -> Mapping[str, T]:
+        """Recursively set `var_name` to `factory()` for all submodules."""
+        modules = self._find(Module, include_root=True)
+        outputs = {}
+        for k, m in modules.items():
+            # print(f"Setting: {k}.{var_name}")
+            value = factory()
+            setattr(m, var_name, value)
+            outputs[k] = value
+        return outputs
 
     # NOTE: We need to take the params and state, as we cannot
     # find it anymore, since we have new classes when we call this!
@@ -491,13 +563,14 @@ class ClickSource(Module):
     def out(self, ts: np.ndarray) -> np.ndarray:
         num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
         out = np.zeros_like(ts)
-        #print("counter", self.counter)
-        #print("num 1ones:", int(np.ceil((ts.shape[0]-self.counter) / num_samples)))
         for i in range(int(np.ceil((ts.shape[0]-self.counter) / num_samples))):
             out[self.counter + i * num_samples, :] = 1
         self.counter += num_samples - (ts.shape[0] % num_samples)
         self.counter = self.counter % ts.shape[0]
         self.counter = self.counter % num_samples
+
+        self.counter = self.collect("counter") << self.counter
+
         #print("click out", out)
         return out
         # TODO: buggy for num_samples greater than frame_length!
@@ -509,7 +582,6 @@ class ClickSource(Module):
 # ======== Test composite modules ======== #
 
 def test_module(module: Module, num_frames=5, frame_length=2048, num_channels=1, sampling_frequency=44100, show=True):
-    import matplotlib.pyplot as plt
     res = []
     for i in range(num_frames):
         ts = (i*frame_length + np.arange(frame_length)) / sampling_frequency
@@ -578,11 +650,10 @@ class FreqFactors(enum.Enum):
     STEP = 1.059463
 
 
-
-@dataclasses.dataclass()
+@dataclasses.dataclass
 class StepSequencer(Module):
 
-    waveform_generator_cls: typing.Type[Module]
+    wave_generator_cls: typing.Type[Module]
     base_frequency: Parameter
     speed: Parameter
     melody: typing.Sequence[int]
@@ -590,19 +661,27 @@ class StepSequencer(Module):
     gate: str
 
     def __post_init__(self):
-        assert all(1 <= m <= 12 for m in self.melody), self.melody
+        #assert all(1 <= m <= 12 for m in self.melody), self.melody
         self.seq_len = len(self.melody)
         self.frequency = Parameter(1)
-        self.waveform_generator = self.waveform_generator_cls(frequency=self.frequency)
+        self.waveform_generator = self.wave_generator_cls(frequency=self.frequency)
+
+        self.gate = "".join(itertools.islice(itertools.cycle(self.gate),
+                                             len(self.melody)))
 
     def copy(self, **kwargs):
         return dataclasses.replace(self, **kwargs)
 
     def out(self, ts: np.ndarray) -> np.ndarray:
+
+
+        
         # TODO
         speed = self.speed(ts)[0]
         base_freq = self.base_frequency(ts)[0]
-        t = int(np.ceil(ts[0] * speed).round().astype(np.int)) % self.seq_len
+        self.collect("quantized_ts") << np.ceil(ts*speed).round().astype(int) % float(self.seq_len)
+        # TODO: this is improper...
+        t = int(np.ceil(ts[0] * speed).round().astype(int)) % self.seq_len
         m = self.melody[t]
         gate = self.gate[t]
         if gate == "H":
@@ -641,13 +720,13 @@ class Reverb(Module):
 class StepSequencing(Module):
     def __init__(self):
         self.base_freq = Parameter(220, lo=220/4, hi=440, knob="r_mixer_hi")
-        self.base_freq2 = Parameter(220, lo=220/4, hi=440, knob="r_mixer_mi")
+        self.base_freq2 = Parameter(220/16, lo=220/16, hi=440, knob="r_mixer_mi")
         self.speed = Parameter(2, lo=1, hi=10, knob="r_tempo")
         self.step = StepSequencer(
             SawSource,
             self.base_freq,
             self.speed,
-            melody=[1, 4, 1, 7, 10, 11, 12],
+            melody=[1, 4, 7, 1, 4, 7, 12, 12],
             steps=[1, 1, 1, 1, 1, 1, 1],
             # Gate mode:
             # - H: hold for the step count,    XXXXXX
@@ -655,23 +734,26 @@ class StepSequencing(Module):
             # - F: Sound for first step count  X
             # - S: Skip, no sound
             #gate='HSHSHS'
-            gate='HHHHSHH'
+            gate='HHHHHHS'
         )
 
-        self.step2 = self.step.copy(melody=[1, 1, 1],
+        self.step2 = self.step.copy(melody=[1, 1, 1, 1],
                                     base_frequency=self.base_freq2,
                                     wave_generator_cls=SineSource,
-                                    gate="HHH")
+                                    gate="HSSSHSSSH")
 
-        self.step3 = self.step.copy(melody=[7, 4, 7],
+        self.step3 = self.step.copy(melody=[12, 12, 12],
                                     base_frequency=self.base_freq2)
 
-        self.mixer = PlainMixer(self.step, self.step2)#, self.step3)
-        self.lp = SimpleLowPass(self.mixer, window_size=Parameter(20, key="w"))
+        self.mixer = PlainMixer(self.step,
+                                self.step2)#, self.step3)
+        self.lp = SimpleLowPass(self.mixer, window_size=Parameter(20, key="w",
+                                                                  knob="fx2_3"))
         self.r = Reverb(self.lp,
                         max_decay=Parameter(0.5, knob="fx2_1", lo=0, hi=0.8),
                         alpha=Parameter(1, knob="fx2_2", lo=0.0001, hi=10))
-        self.out = self.r
+        #self.out = self.r
+        self.out = self.lp
 
 
 class TestModule(Module):
@@ -698,4 +780,29 @@ def _copy(src: Mapping[str, ParamOrState],
     if target:  # Some params were not set -> ignore.
         pass
 
+
+class FutureCache:
+    pass
+
+
+class EnvelopeGenerator:
+    pass
+
+
+def plot_module(plot=(".*quantized_ts",)):
+    m = StepSequencing().step
+    clock = Clock(num_samples=2048, num_channels=1, sample_rate=44100)
+    ts, output = m.collect_data(num_steps=10, clock=clock)
+    output_to_plot = [(k, vs) for k, vs in output
+                      if any(re.fullmatch(r, k) for r in plot)]
+
+    s = plot_lib.Subplots(nrows=len(output_to_plot), width=10)
+    for k, vs in output_to_plot:
+        ax = s.next_ax()
+        ax.plot(ts, np.concatenate(vs, axis=0))
+    plt.show()
+
+
+if __name__ == '__main__':
+    plot_module()
 

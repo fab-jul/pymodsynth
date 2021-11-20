@@ -10,6 +10,10 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
+import threading
+
+import sounddevice
+
 import midi_lib
 import dataclasses
 import importlib
@@ -71,12 +75,12 @@ def _get_modules_path():
 
 class MakeSignal:
 
-    def __init__(self, output_gen_class: str, sample_rate, num_channels,
+    def __init__(self, output_gen_class: str, sample_rate, num_samples, num_channels,
                  signal_window: live_graph_modern_gl.SignalWindow):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
-        self.i = 0
+        self.clock = modules.Clock(num_samples, num_channels, sample_rate)
         self.last_t = time.time()
         self.t0 = -1
         self.signal_window = signal_window
@@ -211,10 +215,9 @@ class MakeSignal:
         self.last_t = t
         if status:
             print(status, file=sys.stderr)
-        ts = (self.i + np.arange(num_samples)) / self.sample_rate
-        # Broadcast `ts` into (num_samples, num_channels)
-        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        assert ts.shape == (num_samples, self.num_channels)
+
+        ts = self.clock()
+
         outdata[:] = self.output_gen(ts)
 
         if EVENT_QUEUE:
@@ -273,14 +276,14 @@ def start_sound(output_gen_class: str, device: int):
     # Now we make the signal maker.
     sin = MakeSignal(output_gen_class=output_gen_class,
                      sample_rate=sample_rate,
+                     num_samples=num_samples,
                      num_channels=num_channels,
                      signal_window=signal_window)
 
     # Start audio stream.
     with sd.OutputStream(
             device=device, blocksize=num_samples,
-            latency="low",
-            channels=num_channels, callback=sin.callback, samplerate=sample_rate):
+            latency="low", channels=num_channels, callback=sin.callback, samplerate=sample_rate):
         # Start window event loop.
         live_graph_modern_gl.run_window_loop(window, timer)
 
