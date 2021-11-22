@@ -49,6 +49,7 @@ class ClockSignal(NamedTuple):
         assert len(signal.shape) == 1
         return np.broadcast_to(signal.reshape(-1, 1), self.shape)
 
+
 class Clock:
 
     def __init__(self, num_samples, num_channels, sample_rate):
@@ -98,7 +99,6 @@ class Monitor:
 
 
 T = TypeVar("T")
-
 
 
 class Module:
@@ -210,10 +210,10 @@ class Module:
         _copy(src=src_state, target=self.find_state())
 
 
-
 class _MathModule(Module):
 
     def __init__(self, op, left, right):
+        super().__init__()
         self.op = op
         self.left = left
         self.right = right
@@ -230,7 +230,9 @@ class _MathModule(Module):
         return module_or_number
 
 
-# TODO
+# TODO: Revisit the whole API.
+#  The idea of this class is to support modules that do not rely on a clock_signal.
+#  E.g. Envelope Generators.
 class InputLessModule(Module):
 
     def get_output(self):
@@ -240,6 +242,7 @@ class InputLessModule(Module):
 class EnvelopeGenerator(InputLessModule):
 
     def __init__(self):
+        super().__init__()
         self.cache = None
 
     def get_output(self):
@@ -250,17 +253,6 @@ class EnvelopeGenerator(InputLessModule):
             decay = np.linspace(1, 0, 10000)
             self.cache = np.concatenate((attack, peak, hold, decay), 0)
         return self.cache
-
-
-def _scatter_into_mask(mask, arr):
-    mask_len, arr_len = mask.shape[0], arr.shape[0]
-    output = np.zeros((mask_len + arr_len, ), dtype=arr.dtype)
-    last_index = 0
-    for i, x in enumerate(mask):
-        if x > 0.5:
-            output[i:i + arr_len] = arr
-            last_index = i + arr_len
-    return output[:last_index]
 
 
 
@@ -323,6 +315,7 @@ class Parameter(Constant):
             clip: If True, clip to [lo, hi] in `set`.
         """
         super().__init__(value)
+        # TODO: Support selecting from a predefined set (e.g. all nice notes).
         if not lo:
             lo = 0.1 * value
         if not hi:
@@ -369,13 +362,6 @@ class Random(Module):
         return res
 
 
-def get_res(query_in, raising, f):
-    res = np.arcsin(query_in) / f
-    if not raising:
-        return np.pi / f - res
-    return res
-
-
 class SineSource(Module):
     def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
         super().__init__()
@@ -408,6 +394,7 @@ class SawSource(Module):
         freq = self.frequency(clock_signal)
         phase = self.phase(clock_signal)
         period = 1 / freq
+        # TODO: Do we need cumsum here?
         out = 2 * (clock_signal.ts/period + phase
                    - np.floor(1/2 + clock_signal.ts/period + phase)) * amp
         return out
@@ -425,6 +412,7 @@ class TriangleSource(Module):
         freq = self.frequency(clock_signal)
         phase = self.phase(clock_signal)
         period = 1 / freq
+        # TODO: Do we need cumsum here?
         out = (2 * np.abs(2 * (clock_signal.ts/period + phase
                                - np.floor(1/2 + clock_signal.ts/period + phase))) - 1) * amp
         return out
@@ -435,11 +423,7 @@ class SineModulator(Module):
         super().__init__()
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
-        # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
-
-    def out(self, clock_signal: ClockSignal):
-        out = self.carrier(clock_signal) * self.inp(clock_signal)
-        return out
+        self.out = self.carrier * self.inp
 
 
 class KernelGenerator(Module):
@@ -504,7 +488,6 @@ class FrameBuffer:
             return self._buffer
 
 
-
 class KernelConvolver(Module):
     """
     Takes a kernel-generator to smooth the input.
@@ -526,10 +509,12 @@ class KernelConvolver(Module):
         kernels = self.kernel_generator(clock_signal)
         # shape must be (frame_length, max_kernel_size, num_channels)
         frame_length, max_kernel_size, num_channels = kernels.shape
-        slices = np.concatenate([full_signal[i:i+max_kernel_size, :] for i in range(frame_length - max_kernel_size + 1, frame_length * 2 - max_kernel_size + 1)])
+        slices = np.concatenate([full_signal[i:i+max_kernel_size, :]
+                                 for i in range(frame_length - max_kernel_size + 1,
+                                                frame_length * 2 - max_kernel_size + 1)])
         slices = slices.reshape(kernels.shape)
         res_block = np.tensordot(slices, kernels, axes=[[1, 2], [1, 2]])
-        res = np.diag(res_block).reshape(clock_signal.ts.shape)
+        res = np.diag(res_block).reshape(clock_signal.shape)
         return res
 
 
@@ -548,7 +533,6 @@ class SimpleLowPass(Module):
         num_samples, num_channels = clock_signal.ts.shape
         input = self.inp(clock_signal)
         # Shape: (2*num_frames, num_channels)
-        # TODO: BUG
         full_signal = np.concatenate((self.last_signal.get(), input), axis=0)
         window_sizes = self.window_size(clock_signal)
         # TODO: Now we have one window size per frame. Seems reasonable?
@@ -654,6 +638,7 @@ class PlainMixer(Module):
         return output / len(self.args)
 
 
+# TODO: Not needed with suport for mul and add I think?
 class MultiScaler(Module):
     """
     Takes n input modules and n input amplitudes and produces n amplified output modules.
@@ -686,8 +671,6 @@ class ClickSource(Module):
         #print("click out", out)
         return out
         # TODO: buggy for num_samples greater than frame_length!
-
-
 
 
 ############################################
@@ -791,7 +774,7 @@ class StepSequencer(Module):
         self.gate = "".join(itertools.islice(itertools.cycle(self.gate),
                                              len(self.melody)))
 
-        self.melody_cycler = _TriggerCycler(self.melody)
+        self.melody_cycler = _Cycler(self.melody)
 
         self.trigger = TriggerMaker(self.bpm)
 
@@ -859,7 +842,8 @@ class StepSequencer(Module):
             return clock_signal.zeros()
 
 
-class _TriggerCycler:
+class _Cycler:
+    """Cycles between `xs` with a nice interface."""
 
     def __init__(self, xs):
         self.xs = xs
@@ -873,7 +857,27 @@ class _TriggerCycler:
         self.i = (self.i + 1) % len(self.xs)
 
 
-def to_melody(trigger, melody: _TriggerCycler):
+def _scatter_into_mask(mask, arr):
+    """Put `arr` into output wherever `mask` is 1.
+
+    E.g:
+        arr =    np.array([5, 4, 3, 2, 1])
+        mask =   np.array([0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0,...])
+        output = np.array([0, 0, 5, 4, 3, 2, 1, 0, 5, 4, 3, 2, ...])
+
+    Revisit after https://stackoverflow.com/questions/70047986/replace-a-single-value-with-multiple-values/70048906#70048906
+    """
+    mask_len, arr_len = mask.shape[0], arr.shape[0]
+    output = np.zeros((mask_len + arr_len, ), dtype=arr.dtype)
+    last_index = 0
+    for i, x in enumerate(mask):
+        if x > 0.5:
+            output[i:i + arr_len] = arr
+            last_index = i + arr_len
+    return output[:last_index]
+
+
+def to_melody(trigger, melody: _Cycler):
     trigger = trigger[:, 0]  # TODO: first channel.
     output = []
     i, = np.where(trigger > 0.5)
@@ -897,8 +901,6 @@ class Reverb(Module):
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         if self.state.get() is None or self.state.get().maxlen != self.num_decays:
-            #num_samples, _ = ts.shape
-            #state_size = len(self.envelope) // num_samples
             self.state.set(collections.deque((clock_signal.zeros() for _ in range(self.num_decays)),
                                              maxlen=self.num_decays))
         d = self.state.get()
@@ -912,20 +914,19 @@ class Reverb(Module):
         return o
 
 
-
 class StepSequencing(Module):
     def __init__(self):
         super().__init__()
         self.base_freq = Parameter(220, lo=220/4, hi=440, knob="r_mixer_hi")
         self.base_freq2 = Parameter(220/4, lo=220/16, hi=440, knob="r_mixer_mi")
-        self.bpm = Parameter(125, lo=10, hi=300, knob="r_tempo")
+        self.bpm = Parameter(65, lo=10, hi=300, knob="r_tempo")
         bpm_melody = self.bpm * 4
         self.melody_highs = StepSequencer(
             SawSource,
             self.base_freq,
             bpm_melody,
-            #melody=[1, 7, 1, 1, 1, 8, 1, 1, 12, 12, 12, 8],
-            melody=[1, 2, 3, 4],
+            melody=[1, 7, 1, 1, 1, 8, 1, 1, 12, 12, 12, 8],
+            #melody=[1, 2, 3, 4],
             steps=[1],
             gate='H',
             melody_randomizer=Parameter(0, knob="r_4")
@@ -934,13 +935,13 @@ class StepSequencing(Module):
         self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
                                                   wave_generator_cls=SawSource,)
 
-        self.mixer_c1 = Parameter(0.0, lo=0, hi=1.5, knob="fx2_1")
-        self.mixer_c2 = Parameter(0.0, lo=0, hi=1.5, knob="fx2_2")
+        self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
+        self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
         self.melody = (self.mixer_c1 * self.melody_highs +
                        self.mixer_c2 * self.melody_lows)
 
         self.lp_melody = SimpleLowPass(
-            self.melody, window_size=Parameter(6, hi=2000, key="w",
+            self.melody, window_size=Parameter(10, hi=2000, key="w",
                                                knob="fx2_3"))
 
         self.step_bass = StepSequencer(
