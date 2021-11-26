@@ -176,6 +176,8 @@ class MakeSignal:
         self.knob_mapping = {self.known_knobs.get(param.knob): param
                              for _, param in self.params.items()
                              if param.knob}
+        print("Knob_mapping=", self.knob_mapping)
+        print("self.params=", self.params)
 
         self.midi_controller.reset_interesting_knobs()
         for knob in self.knob_mapping:
