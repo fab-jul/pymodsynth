@@ -4,6 +4,13 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
+
+## WIP
+
+```sh
+python gimme_sound.py -d -1 --output_gen_class=FooBar
+```
+
 ## Random Ideas
 
 ![Figure](https://github.com/fab-jul/pymodsynth/raw/main/fig.png)
@@ -42,16 +49,14 @@ def saw_tooth(t, duration=1):
 
 ## Next Steps
 
-- hot reloading of `make_out` @fabian
-- reactive parameter wiring @fabian
-  - keep in mind that parameters will also become signals!
+- Kick and Snare (drum machine)
+- Filters (low/mi/high - buttersworth)
+- Filters (decay / reverb etc.)
+- Record with microphone
+- Input samples
+- Record our sound
+- Visual feedback in the GUI / explore keyboard and mouse again
 
-
-
-param = Parameter.key()
-param = Parameter.signal(signal)
-
-generator(param)
 
 ## Considerations
 - some modules have inner state (modulator has its own clock to create a sine). these need to know the ts created by the callback. 

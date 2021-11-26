@@ -49,7 +49,6 @@ class FakeCollector(Collector):
 
 def test():
     collect = Collector()
-
     bar = collect("test") << "foo"
     assert bar == "foo"
 

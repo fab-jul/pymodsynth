@@ -176,6 +176,7 @@ class Module:
     def find_params(self) -> MutableMapping[str, "Parameter"]:
         return self._find(Parameter)
 
+
     def find_state(self) -> MutableMapping[str, "State"]:
         return self._find(State)
 
@@ -239,20 +240,68 @@ class InputLessModule(Module):
         pass
 
 
-class EnvelopeGenerator(InputLessModule):
+class GaussEnvelopeGenerator(InputLessModule):
 
-    def __init__(self):
+    def __init__(self, elen):
         super().__init__()
         self.cache = None
+        self.elen: Parameter = elen
 
     def get_output(self):
-        if self.cache is None:
-            attack = np.linspace(0, 1, 2000)
-            peak = np.linspace(1, 1.1, 300)
-            hold = np.ones(2000)
-            decay = np.linspace(1, 0, 10000)
-            self.cache = np.concatenate((attack, peak, hold, decay), 0)
-        return self.cache
+        elen = round(self.elen.get())
+        attack = np.linspace(0, 2, elen//4)
+        peak = np.linspace(2, 1, elen//10)
+        hold = np.ones(elen*2)
+        decay = np.linspace(1, 0, elen)#//8)
+        zeros = np.zeros(elen*4)
+        #return np.array(10*[np.exp(-(x-(elen/2))**2 * 0.001) for x in range(elen)])
+        #x = np.arange(elen)
+        #return 10*np.exp(-(x-(elen/2))**2 * 0.001)
+        return np.concatenate((attack,
+                               peak,
+                               hold,
+                               decay,
+                               zeros), 0)
+
+
+class EnvelopeGenerator(InputLessModule):
+
+    def __init__(self, elen):
+        super().__init__()
+        self.cache = None
+        self.elen: Parameter = elen
+
+    def get_output(self):
+        elen = round(self.elen.get())
+        attack = np.linspace(0, 1, elen)
+        peak = np.linspace(1, 1.1, elen//4)
+        hold = np.ones(elen)
+        decay = np.linspace(1, 0, elen*4)
+        return np.concatenate((attack, peak, hold, decay), 0)
+
+
+class ADSREnvelopeGenerator(InputLessModule):
+
+    def __init__(self, attack, decay, sustain, release, hold):
+        super().__init__()
+        self.attack = attack
+        self.decay = decay
+        self.sustain = sustain
+        self.release = release
+        self.hold = hold or Parameter(100)
+
+    def get_output(self):
+        t_attack = round(self.attack.get())
+        t_decay = round(self.decay.get())
+        sustain_height = self.sustain.get()
+        t_hold = round(self.hold.get())
+        t_release = round(self.release.get())
+
+        attack = np.linspace(0, 1, t_attack)
+        decay = np.linspace(1, sustain_height, t_decay)
+        hold = np.ones(t_hold) * sustain_height
+        release = np.linspace(sustain_height, 0, t_release)
+        return np.concatenate((attack, decay, hold, release), 0)
 
 
 
@@ -316,7 +365,7 @@ class Parameter(Constant):
         """
         super().__init__(value)
         # TODO: Support selecting from a predefined set (e.g. all nice notes).
-        if not lo:
+        if lo is None:
             lo = 0.1 * value
         if not hi:
             hi = max(1, 1.9 * value)
@@ -328,6 +377,9 @@ class Parameter(Constant):
         self.knob = knob
         self.shift_multiplier = shift_multiplier
         self.clip = clip
+
+    def __repr__(self):
+        return f"Parameter({self.value},{self.knob})"
 
     def set(self, value):
         if self.clip:
@@ -747,6 +799,9 @@ class FreqFactors(enum.Enum):
     STEP = 1.059463
 
 
+
+
+
 @dataclasses.dataclass
 class StepSequencer(Module):
 
@@ -763,6 +818,8 @@ class StepSequencer(Module):
     # gate='HSHSHS'
     gate: str
     melody_randomizer: Optional[Parameter] = None
+    env_param: Parameter = None
+    envelope: Module = None
 
     def __post_init__(self):
         self.collect = collector_lib.FakeCollector()
@@ -777,8 +834,8 @@ class StepSequencer(Module):
         self.melody_cycler = _Cycler(self.melody)
 
         self.trigger = TriggerMaker(self.bpm)
-
-        self.envelope_generator = EnvelopeGenerator()
+        self.env_param = self.env_param or Parameter(200)
+        self.envelope_generator = self.envelope or EnvelopeGenerator(self.env_param)
         self.envelope_future_cache = FutureCache()
 
         if self.melody_randomizer:
@@ -813,18 +870,23 @@ class StepSequencer(Module):
             trigger = self.melody_randomizer_trigger(clock_signal).max() > 0
             if trigger:
                 # num_steps = len(self.melody_cycler.xs)
-                base = [1, 4, 7, 12] * 2
+                base = random.choices([(3*i)%12 for i in range(12)], k=random.randint(3, 32))
                 random.shuffle(base)
                 print("New melody", base)
                 self.melody_cycler.xs = base
+                self.melody_cycler.i = 0
+
 
         triggers = self.collect("triggers") << self.trigger(clock_signal)
+        # (E,), E >>> num_samples
         envelope = self.collect("raw") << self.envelope_generator.get_output()
-
+        # (E+T,)
         future = self.collect("future") << _scatter_into_mask(triggers, envelope)
+
         current_i = clock_signal.sample_indices[0]
         self.envelope_future_cache.prepare(current_i, num_samples=clock_signal.num_samples)
         self.envelope_future_cache.add(future)
+
         current_envelope = self.collect("envelope") << self.envelope_future_cache.get(
             clock_signal.num_samples)
 
@@ -864,6 +926,14 @@ def _scatter_into_mask(mask, arr):
         arr =    np.array([5, 4, 3, 2, 1])
         mask =   np.array([0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0,...])
         output = np.array([0, 0, 5, 4, 3, 2, 1, 0, 5, 4, 3, 2, ...])
+
+        arr =    np.array([5, 4, 3, 2, 1])
+        mask  =   [1, 0]
+        output =  [5, 4, 3, 2, 1]
+
+        arr =    np.array([5, 4, 3, 2, 1])
+        mask =   np.array([0, 0, 1, 0, 0, 1, 0, 0, 0,...])
+        output = np.array([0, 0, 5, 4, 3, 5, 4, 3, 2, ...])
 
     Revisit after https://stackoverflow.com/questions/70047986/replace-a-single-value-with-multiple-values/70048906#70048906
     """
@@ -914,6 +984,81 @@ class Reverb(Module):
         return o
 
 
+
+class BaseDrum(Module):
+    def __init__(self):
+        super().__init__()
+
+
+class FooBar(Module):
+    def __init__(self):
+        super().__init__()
+
+        self.base_freq = Parameter(220, lo=220 / 4, hi=440, knob="r_mixer_hi", key="u", clip=True)
+        self.bpm = Parameter(160, lo=10, hi=300, knob="r_tempo")
+
+        self.env_param_bass = Parameter(200, lo=100, hi=20000, knob="r_mixer_mi", key="b", clip=True)
+        self.env_param_foo = Parameter(200, lo=100, hi=20000, knob="r_mixer_lo", key="c", clip=True)
+
+        self.melody1 = StepSequencer(
+            wave_generator_cls=TriangleSource,
+            base_frequency=self.base_freq,
+            bpm=self.bpm,
+            melody=[0, 4, 7],
+            steps=[1],
+            gate='H',
+            env_param=self.env_param_foo,
+            #melody_randomizer=Parameter(0, knob="r_4"),
+        )
+
+        self.melody2 = self.melody1.copy(
+            base_frequency=self.base_freq * (FreqFactors.STEP.value ** 7))
+        self.melody3 = self.melody1.copy(
+            base_frequency=self.base_freq * (FreqFactors.STEP.value ** 4))
+
+        self.melody = (self.melody1 +
+                       self.melody2 +
+                       self.melody3)
+
+        self.attack_t = Parameter(200, lo=1, hi=2000, knob="fx1_0")
+        self.decay_t = Parameter(10, lo=1, hi=20000, knob="fx1_1")
+        self.sustain_t = Parameter(0.5, lo=0.01, hi=1., knob="fx1_2")
+        self.release_t = Parameter(200, lo=1, hi=10000, knob="fx1_3")
+        self.hold_t = Parameter(200)
+
+        self.bass = self.melody1.copy(
+            wave_generator_cls=SineSource,
+            bpm=self.bpm/2,
+            melody=[1],#random.choices([1,2,4,7,9], k=3),
+            env_param=self.env_param_bass,
+            envelope=ADSREnvelopeGenerator(
+                self.attack_t,
+                self.decay_t,
+                self.sustain_t,
+                self.release_t,
+                self.hold_t,
+            ),
+            base_frequency=self.base_freq / 4)
+
+        self.mixer = Parameter(0.5, lo=0., hi=.8, knob="fx2_1", key="q", clip=True)
+        self.mixer_m = Parameter(0.5, lo=0., hi=.8, knob="fx2_2", key="w", clip=True)
+
+        self.out = (self.mixer * self.melody +
+                    self.mixer_m * self.bass * 2
+        )
+
+
+        return
+
+
+
+        self.out = (self.mixer_m * 1/3*(self.melody1 + self.melody2 + self.melody3)
+                    + self.mixer * self.bass)
+
+
+
+
+
 class StepSequencing(Module):
     def __init__(self):
         super().__init__()
@@ -925,13 +1070,12 @@ class StepSequencing(Module):
             SawSource,
             self.base_freq,
             bpm_melody,
-            melody=[1, 7, 1, 1, 1, 8, 1, 1, 12, 12, 12, 8],
+            melody=[1,5,9,12,1,5,12,9, 1,9,5,12, 1,12,9,5],
             #melody=[1, 2, 3, 4],
             steps=[1],
             gate='H',
             melody_randomizer=Parameter(0, knob="r_4")
         )
-
         self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
                                                   wave_generator_cls=SawSource,)
 
@@ -948,21 +1092,21 @@ class StepSequencing(Module):
             wave_generator_cls=SineSource,
             base_frequency=self.base_freq2,
             bpm=self.bpm,
-            melody=[1, 1, 1, 1],
+            melody=[1, 5, 3, 5],
             steps=[1],
             gate="HSHS")
 
 
-        self.step_highs = StepSequencer(
-            wave_generator_cls=SineSource,
-            base_frequency=Parameter(220),
-            bpm=self.bpm,
-            melody=[1, 1, 1, 1],
-            steps=[1],
-            gate="SHSH")
+#        self.step_highs = StepSequencer(
+#            wave_generator_cls=SineSource,
+#            base_frequency=Parameter(220),
+#            bpm=self.bpm,
+#            melody=[1, 1, 1, 1],
+#            steps=[1],
+#            gate="SHSH")
 
 
-        self.out = self.lp_melody + self.step_bass + self.step_highs
+        self.out = self.lp_melody# + self.step_bass  # + self.step_highs
 
 
 class TestModule(Module):
@@ -1015,7 +1159,7 @@ class FutureCache:
     def add(self, arr):
         assert len(arr.shape) == 1, arr.shape  # TODO: GENERALIZE
         self._adapt_arr_len(arr.shape[0])
-        self.curr_arr[:arr.shape[0]] = np.maximum(self.curr_arr[:arr.shape[0]], arr)
+        self.curr_arr[:arr.shape[0]] = np.add(self.curr_arr[:arr.shape[0]], arr)
 
 
 class TriggerMaker(Module):
@@ -1043,8 +1187,9 @@ def _intersperse_gaps(vs, gap_len=100):
     return o
 
 
-def plot_module(plot=(".*",), num_steps=4):
-    m = StepSequencing().step
+def plot_module(plot=("(melody1|bass).*",), num_steps=4):
+    m = FooBar()
+
     clock = Clock(num_samples=2048, num_channels=1, sample_rate=44100)
     ts, output = m.collect_data(num_steps=num_steps, clock=clock)
     output_to_plot = [(k, vs) for k, vs in output
