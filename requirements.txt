@@ -1,0 +1,7 @@
+sounddevice
+rtmidi
+numpy
+moderngl
+moderngl_window
+matplotlib
+scipy
