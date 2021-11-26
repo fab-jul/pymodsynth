@@ -304,6 +304,38 @@ class ADSREnvelopeGenerator(InputLessModule):
         return np.concatenate((attack, decay, hold, release), 0)
 
 
+class Clipper(Module):
+    """ really basic digital distortion, just for testing... """
+    def __init__(self, drive, waveform_generator):
+        super().__init__()
+        self.drive = drive # 0-1
+        self.waveform_generator = waveform_generator
+
+    def process(self, signal):
+        drive = self.drive.get()
+        threshold = 1 - drive
+        if signal > 0:
+            signal = threshold if signal > threshold else signal
+        else:
+            signal = -threshold if signal < -threshold else signal
+
+        # make up gain
+        signal = signal / (threshold + 0.001)
+
+        return signal
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        signal = self.waveform_generator(clock_signal)
+        return np.vectorize(self.process)(signal)
+
+    # def __call__(self, signal):
+    #     # not sure I totally get the concept but to me it would make sense if we had a class of moduels that would
+    #     # take audio as input in order to process it...
+    #
+    #     signal = np.vectorize(self.process)(signal)
+    #
+    #     return signal
+
 
 class Constant(Module):
 
@@ -989,6 +1021,23 @@ class BaseDrum(Module):
     def __init__(self):
         super().__init__()
 
+class Bar3000(Module):
+
+    def __init__(self):
+        super().__init__()
+
+
+        # I would love if we could pass signals to modules. For example effects or filters would usually process an
+        # input audio signal and return the processed signal. Signals could be any "voltage", for example audio or control
+        # signals (from an lfo or envelope generators)
+        # I know it's currently possible to modify signals in the out method of a module class but this directly ties
+        # the processing to the generating of the signal which limits the routing options.
+        # However, it could also just be that I wasn't able to understand the concept yet :D
+        self.clipper = Clipper(drive=Parameter(0.8), waveform_generator=TriangleSource(Parameter(320)))
+
+        self.out = self.clipper
+
+        return
 
 class FooBar(Module):
     def __init__(self):
