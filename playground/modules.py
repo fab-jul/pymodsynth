@@ -123,7 +123,13 @@ class Module:
     def __init__(self):
         self.collect = collector_lib.FakeCollector()
 
-    def collect_data(self, num_steps, clock: Clock) -> Tuple[np.ndarray, Sequence[Tuple[str, Sequence[Any]]]]:
+    def collect_data(self, num_steps, clock: Clock,
+                     warmup_num_steps=100) -> Tuple[np.ndarray, Sequence[Tuple[str, Sequence[Any]]]]:
+        # Warmup.
+        for _ in range(warmup_num_steps):
+            clock_signal = clock()
+            self(clock_signal)
+
         # Set collect to a useful instance.
         collectors = self._set("collect", factory=collector_lib.Collector)
 
@@ -1004,7 +1010,7 @@ class FooBar(Module):
             wave_generator_cls=TriangleSource,
             base_frequency=self.base_freq,
             bpm=self.bpm,
-            melody=[0, 4, 7],
+            melody=[0, 0, 0, 4, 0, 0, 0, 12, 0, 0, 0, 4],
             steps=[1],
             gate='H',
             env_param=self.env_param_foo,
@@ -1029,7 +1035,7 @@ class FooBar(Module):
         self.bass = self.melody1.copy(
             wave_generator_cls=SineSource,
             bpm=self.bpm/2,
-            melody=[1],#random.choices([1,2,4,7,9], k=3),
+            melody=[1, 4],#random.choices([1,2,4,7,9], k=3),
             env_param=self.env_param_bass,
             envelope=ADSREnvelopeGenerator(
                 self.attack_t,
@@ -1189,6 +1195,8 @@ def _intersperse_gaps(vs, gap_len=100):
 
 def plot_module(plot=("(melody1|bass).*",), num_steps=4):
     m = FooBar()
+    m.env_param_foo.set(10000)
+    m.bpm.set(1000)
 
     clock = Clock(num_samples=2048, num_channels=1, sample_rate=44100)
     ts, output = m.collect_data(num_steps=num_steps, clock=clock)
