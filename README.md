@@ -4,6 +4,26 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
+## Code Health - Fix this asap
+
+- [ ] Make sure everything we have in main works on macOS and windows
+- [ ] Add some basic unit tests for the sound loop and for main modules
+
+## Milestones
+
+- Framework:
+  - [ ] Visualize arbitrary signals.
+  - [ ] Automatic testing (github integration?)
+  - [ ] Cache outputs.
+- Modules:
+  - [ ] Kick and Snare (drum machine).
+  - [ ] Filters (low/mi/high - buttersworth).
+  - [ ] Filters (decay / reverb etc.)
+  - [ ] Record with microphone.
+  - [ ] Input samples.
+  - [ ] Record output of the root module into a wav file for sharing/re-use.
+  - [ ] Visual feedback in the GUI / explore keyboard and mouse again.
+
 
 ## WIP
 
@@ -46,16 +66,6 @@ def saw_tooth(t, duration=1):
 
 - [pyo](http://ajaxsoundstudio.com/software/pyo/) for audio?
 
-
-## Next Steps
-
-- Kick and Snare (drum machine)
-- Filters (low/mi/high - buttersworth)
-- Filters (decay / reverb etc.)
-- Record with microphone
-- Input samples
-- Record our sound
-- Visual feedback in the GUI / explore keyboard and mouse again
 
 
 ## Considerations
