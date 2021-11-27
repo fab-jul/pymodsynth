@@ -128,8 +128,8 @@ class SignalWindow(mglw.WindowConfig):
         # Turn signal into a solid line by:
         # - setting every even element to signal + 0.1
         # - setting every odd element to signal - 0.1
-        self.vertices[::2, 1] = signal + 0.3
-        self.vertices[1::2, 1] = signal - 0.3
+        self.vertices[::2, 1] = signal + 0.1
+        self.vertices[1::2, 1] = signal - 0.1
 
         self.echoes.append(self.vertices[:])
         if len(self.echoes) > 1:
