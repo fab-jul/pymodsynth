@@ -47,13 +47,18 @@ def _assert_outputs_similar(ts, module_a, module_b):
 
 def test_math():
     ts = np.arange(10.)  # TODO
-    const_ten = modules.Constant(10.)
-    _assert_outputs_similar(ts, const_ten * 5, modules.Constant(50.))
-    _assert_outputs_similar(ts, const_ten / 5, modules.Constant(2.))
-    _assert_outputs_similar(ts, const_ten + 5, modules.Constant(15.))
-    _assert_outputs_similar(ts, const_ten - 5, modules.Constant(5.))
 
-    _assert_outputs_similar(ts, 5 * const_ten, modules.Constant(50.))
-    _assert_outputs_similar(ts, 5 / const_ten, modules.Constant(0.5))
-    _assert_outputs_similar(ts, 5 + const_ten, modules.Constant(15.))
-    _assert_outputs_similar(ts, 5 - const_ten, modules.Constant(-5.))
+    const_ten = modules.Constant(10.)
+    const_five = modules.Constant(5.)
+
+    # Test using a scalar and a module.
+    for other in (5., const_five):
+        _assert_outputs_similar(ts, const_ten * other, modules.Constant(50.))
+        _assert_outputs_similar(ts, const_ten / other, modules.Constant(2.))
+        _assert_outputs_similar(ts, const_ten + other, modules.Constant(15.))
+        _assert_outputs_similar(ts, const_ten - other, modules.Constant(5.))
+
+        _assert_outputs_similar(ts, other * const_ten, modules.Constant(50.))
+        _assert_outputs_similar(ts, other / const_ten, modules.Constant(0.5))
+        _assert_outputs_similar(ts, other + const_ten, modules.Constant(15.))
+        _assert_outputs_similar(ts, other - const_ten, modules.Constant(-5.))
