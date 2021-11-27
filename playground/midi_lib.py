@@ -11,9 +11,12 @@ import queue
 import re
 import threading
 import typing
+import platform
 
-import rtmidi
-
+if platform.system() == 'Windows':
+    import rtmidi2 as rtmidi
+else:
+    import rtmidi
 
 MidiValue = int  # 0-127
 MidiValueNormalized = float  # 0...1

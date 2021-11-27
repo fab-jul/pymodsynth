@@ -32,6 +32,7 @@ import sounddevice as sd
 import live_graph_modern_gl
 import modules
 
+DISABLE_MIDI = False
 
 # Can contain:
 # - KeyAndMouseEvent
@@ -111,8 +112,11 @@ class MakeSignal:
         self.midi_controller: typing.Optional[midi_lib.Controller] = None
         try:
             self.midi_controller = midi_lib.Controller.make()
-        except midi_lib.ControllerError as e:
-            print(f"Caught: {e}")
+        # temporary hack for windows, where rtmidi has problems
+        #except midi_lib.ControllerError as e:
+        #    print(f"Caught: {e}")
+        except:
+            pass
 
         Timer(fire_every=1,
               repeats=True,
