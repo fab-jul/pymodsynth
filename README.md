@@ -40,6 +40,10 @@ git push origin -d "$BRANCH"  # Delete remotely
 python gimme_sound.py -d -1 --output_gen_class=FooBar
 ```
 
+---
+
+# Old stuff.
+
 ## Random Ideas
 
 ![Figure](https://github.com/fab-jul/pymodsynth/raw/main/fig.png)
@@ -83,11 +87,14 @@ def saw_tooth(t, duration=1):
 
 
 - callback:
+
+```
 create ts :: [sampling_time]
 
 generator :: (sampling_times, _) -> (sampling_times, signal_values)
 
 filter :: (sampling_times, input_values) -> (sampling_times, output_values)
+```
 
 but how to pass changing parameters? every timestep there could be new params... but different filters have different numbers of parameters... so channels are not the way
 -> this is also solved by having access to ts, because paramset can be sampled with ts. 
