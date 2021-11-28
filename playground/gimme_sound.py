@@ -31,6 +31,7 @@ import sounddevice as sd
 
 import live_graph_modern_gl
 import modules
+import rhythm
 
 DISABLE_MIDI = False
 
@@ -127,7 +128,7 @@ class MakeSignal:
         self._set_output_gen(self.output_gen)
 
     def _make_output_gen(self) -> modules.Module:
-        avaiable_vars = vars(modules)
+        avaiable_vars = {**vars(modules), **vars(rhythm)}
         if self.output_gen_class not in avaiable_vars:
             raise ValueError(f"Invalid class: {self.output_gen_class}")
         print(f"Creating {self.output_gen_class}...")
