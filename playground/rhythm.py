@@ -3,6 +3,8 @@ import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable
 
+import matplotlib.pyplot as plt
+
 P = Parameter
 
 
@@ -32,7 +34,7 @@ class ADSRShapeGen:
 
 class Track(NamedTuple):
     name: str
-    pattern: np.ndarray
+    pattern: List[int]
     note_values: float
     shape_gen: Callable  # regular function or Module
 
@@ -61,27 +63,57 @@ class DrumMachine(Module):
         self.tracks = tracks
         self.dummy = SineSource(frequency=P(220, key='w'))
 
+    def _get_old_signal(self):
+
+        return None
+
     def out(self, clock_signal: ClockSignal):
+        if old := self._get_old_signal():
+            return old
+
         # a beat is 1/4 bar. bps = bpm/60. 1/bps = seconds / beat. sampling_freq = samples / second.
         # -> samples / beat = sampling_freq / bps
         bpm = np.mean(self.bpm(clock_signal))
         samples_per_beat = SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
         assert(samples_per_beat >= 2)
+        print("samples_per_beat", samples_per_beat)
+        # generate all trigger tracks.
+        trigger_tracks = []
+        for track in self.tracks:
+            triggers = DrumMachine._track_to_triggers(track, samples_per_beat)
+            # these have different lengths depending on the number of bars given. loop until end of frame.
+            while len(triggers) < len(clock_signal.ts):
+                triggers = np.tile(triggers, 2)
+            # we started all triggers from time 0. apply the offset
+            offset = clock_signal.sample_indices[0] % clock_signal.num_samples
+            triggers = np.roll(triggers, offset)
+            trigger_tracks.append(triggers[:len(clock_signal.ts)])
+        # for x in trigger_tracks:
+        #     plt.plot(x)
+        #     plt.show()
 
-        # tracks to trigger signal: for every one, append [1000...], for every zero append [0000...]
+        # now these trigger_tracks must be given shapes. this is an operation with time-context, and should be
+        # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
+
+
+        return None
 
     @staticmethod
-    def _track_to_trigger(track: Track, samples_per_beat):
-        """Create a time signal of triggers. The length cspds to the number of bars in the given track pattern"""
+    def _track_to_triggers(track: Track, samples_per_beat):
+        """Create a time signal of triggers. The length corresponds to the number of bars in the given track pattern"""
         _, pattern, note_value, _ = track
-        samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16 * 4 = (1/4 * samples_per_beat) per note
+        samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16*4 = (1/4 * samples_per_beat) per note
         indices = np.nonzero(pattern)[0] * samples_per_note
         triggers = np.zeros(len(pattern) * samples_per_note)
+        #print("indices", indices)
         triggers[indices] = 1
+        #plt.plot(triggers)
+        #plt.show()
         return triggers
 
+
 kick = Track(name="kick",
-                     pattern=[1, 1, 0, 1, 1, 0, 0, 1],
+                     pattern=[1, 0, 0, 1, 1, 0, 0, 1],
                      note_values=1 / 8,
                      shape_gen=ADSRShapeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
                      )
@@ -90,14 +122,12 @@ snare = Track(name="snare",
                       note_values=1 / 4,
                       shape_gen=ADSRShapeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
                       )
-hihat = Track(name="hihat",
-                      pattern=[1, 1, 1, 1, 1, 1, 1, 1],
-                      note_values=1 / 8,
-                      shape_gen=ADSRShapeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
-                      )
 
-triggers = DrumMachine._track_to_trigger(kick, 10)
-print(triggers)
+# t1 = DrumMachine._track_to_triggers(kick, 4)
+# t2 = DrumMachine._track_to_triggers(snare, 4)
+# print(t1)
+# print(t2)
+
 
 class Drummin(Module):
 
@@ -117,7 +147,7 @@ class Drummin(Module):
                       note_values=1 / 8,
                       shape_gen=ADSRShapeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
                       )
-        self.output = DrumMachine(bpm=Parameter(80, key='q'), tracks=[kick, snare, hihat])
+        self.output = DrumMachine(bpm=Parameter(44000, key='q'), tracks=[kick, snare, hihat])
         self.out = self.output
 
 
