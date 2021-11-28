@@ -50,11 +50,16 @@ class Clock:
         self.arange = np.arange(self.num_samples, dtype=int)  # Cache it.
 
     def __call__(self) -> ClockSignal:
+        """Gets clock signal and increments i."""
+        clock_signal = self.get_current_clock_signal()
+        self.i += self.num_samples
+        return clock_signal
+
+    def get_current_clock_signal(self):
         sample_indices = self.i + self.arange
         ts = sample_indices / self.sample_rate
         # Broadcast `ts` into (num_samples, num_channels)
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        self.i += self.num_samples
         return ClockSignal(ts, sample_indices, self.sample_rate)
 
 
@@ -78,11 +83,12 @@ class Module:
     """
     Module :: Signal -> Signal, in particular:
     Module :: [Sampling_Times] -> [Samples]
-    Modules can be called on a nparray of sampling times, and calculate an output of the same size according to
+
+    Modules can be called on a nparray of sampling times,
+    and calculate an output of the same size according to
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
-    measure_time = False
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
@@ -519,7 +525,6 @@ class ClickModulation(Module):
         self.wild_triangles = sum(TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3))
         self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
         # test_module(self.out, num_frames=10)
-
 
 @tests_helper.mark_for_testing()
 class BabiesFirstSynthie(Module):

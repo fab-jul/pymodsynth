@@ -114,8 +114,8 @@ class SynthesizerController:
 
         self._set_output_gen(self.output_gen)
 
-    def _make_output_gen(self) -> modules.Module:
-        avaiable_vars = vars(modules)
+    def _make_output_gen(self, modules_module=modules) -> modules.Module:
+        avaiable_vars = vars(modules_module)
         if self.output_gen_class not in avaiable_vars:
             raise ValueError(f"Invalid class: {self.output_gen_class}")
         print(f"Creating {self.output_gen_class}...")
@@ -127,14 +127,30 @@ class SynthesizerController:
 
         self.modules_watcher.did_read_file_just_now()
 
-        print("Reading modules.py ...")
-        importlib.reload(modules)
+        print("Trying to reload modules.py ...")
+        # noinspection PyBroadException
         try:
-            new_instance = self._make_output_gen()
+            modules_new = importlib.import_module("modules", "playground")
+            importlib.reload(modules_new)
+            new_instance = self._make_output_gen(modules_module=modules_new)
         except:
             traceback.print_exc()
-            print(f"Blanked catch, not reloading...")
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
             return
+
+        # Try passing through one clock signal to catch errors in `out`.
+        clock_signal = self.clock.get_current_clock_signal()
+
+        # noinspection PyBroadException
+        try:
+            new_instance(clock_signal)
+        except:
+            traceback.print_exc()
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
+            return
+
+        # All good, can use new code.
+        importlib.reload(modules)
 
         # Copy old state and params.
         new_instance.copy_params_and_state_from(
@@ -142,6 +158,7 @@ class SynthesizerController:
             src_state=self.state)
 
         self._set_output_gen(new_instance)
+        print("Reloaded modules!")
 
     def _set_output_gen(self, output_gen: modules.Module):
         """Called on init and when modules.py changes."""
