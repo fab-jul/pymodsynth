@@ -104,9 +104,9 @@ class DrumMachine(Module):
         #     plt.plot(x)
         #     plt.show()
 
-        # now these trigger_tracks must be given shapes. this is an operation with time-context, and should be
+        # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
         # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
-        
+
 
         return None
 
@@ -126,31 +126,31 @@ class DrumMachine(Module):
 
 class TriggerModulator:
     """
-        Put a shape on every trigger. If result is longer than a frame, keep the rest for the next call.
+        Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
         Combine overlaps with a suitable function: max, fst, snd, add, ...
         """
     def __init__(self):
 
-    def __call__(self, clock_signal: ClockSignal, triggers, shape_gen):
-        """Generate only one shape per trigger"""
+    def __call__(self, clock_signal: ClockSignal, triggers, envelope_gen):
+        """Generate only one envelope per trigger"""
         trigger_indices = np.nonzero(triggers)
-                trigger_ts = clock_signal.ts[trigger_indices]
-                trigger_clock_indices = clock_signal.sample_indices[trigger_indices]
-        # the shape_gen should depend on trigger_ts and trigger_clock_indices only
-        shapes = []
+        trigger_ts = clock_signal.ts[trigger_indices]
+        trigger_clock_indices = clock_signal.sample_indices[trigger_indices]
+        # the envelope_gen should depend on trigger_ts and trigger_clock_indices only
+        envelopes = []
         for ts, clk_ind in zip (trigger_ts, trigger_clock_indices):
-                    shapes.append(shape_gen(ts, clk_ind))
+            envelopes.append(envelope_gen(ts, clk_ind))
 
 
 kick = Track(name="kick",
              pattern=[1, 0, 0, 1, 1, 0, 0, 1],
              note_values=1 / 8,
-             shape_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
+             envelope_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
              )
 snare = Track(name="snare",
               pattern=[0, 1, 0, 1],
               note_values=1 / 4,
-              shape_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
+              envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
               )
 
 # t1 = DrumMachine._track_to_triggers(kick, 4)
@@ -165,17 +165,17 @@ class Drummin(Module):
         kick = Track(name="kick",
                      pattern=[1, 0, 0, 1, 1, 0, 0, 0],
                      note_values=1 / 8,
-                     shape_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
+                     envelope_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
                      )
         snare = Track(name="snare",
                       pattern=[0, 1, 0, 1],
                       note_values=1 / 4,
-                      shape_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
+                      envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
                       )
         hihat = Track(name="hihat",
                       pattern=[1, 1, 1, 1, 1, 1, 1, 1],
                       note_values=1 / 8,
-                      shape_gen=ADSREnvelopeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
+                      envelope_gen=ADSREnvelopeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
                       )
         self.output = DrumMachine(bpm=Parameter(44000, key='q'), tracks=[kick, snare, hihat])
         self.out = self.output
