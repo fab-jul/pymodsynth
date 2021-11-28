@@ -27,16 +27,25 @@ def sine():
     return modules.SineSource()
 
 
+@pytest.fixture()
+def clock_signal():
+    clock = modules.Clock()
+    clock_signal = clock()
+    return clock_signal
+
+@pytest.fixture()
+def ts(clock_signal):
+    return clock_signal.ts
+
 # ------------------------------------------------------------------------------
 # Actual Tests
 # ------------------------------------------------------------------------------
 
 
-def test_marked_modules(marked_module_instance: modules.Module):
+def test_marked_modules(marked_module_instance: modules.Module, clock_signal):
     """Instantiates and calls all marked modules."""
-    ts = np.arange(100).reshape(-1, 1) * np.ones(2)
-    out = marked_module_instance(ts)
-    assert out.shape == ts.shape
+    out = marked_module_instance(clock_signal)
+    assert out.shape == clock_signal.shape
 
 
 def _assert_outputs_similar(ts, module_a, module_b):
@@ -45,9 +54,7 @@ def _assert_outputs_similar(ts, module_a, module_b):
     np.testing.assert_allclose(out_a, out_b)
 
 
-def test_math():
-    ts = np.arange(10.)  # TODO
-
+def test_math(ts):
     const_ten = modules.Constant(10.)
     const_five = modules.Constant(5.)
 
