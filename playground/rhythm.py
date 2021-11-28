@@ -78,10 +78,12 @@ class TriggerModulator:
             current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
             for i, envelope in zip(trigger_indices, envelopes):
                 current_signal[i:i+len(envelope)] = envelope.reshape((-1, 1))
-            # combine the old and new signal using the given method
-            max_len = max(len(previous_signal), len(current_signal))
-            previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
-            current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+        # combine the old and new signal using the given method
+        max_len = max(len(previous_signal), len(current_signal))
+        previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
+        current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+        print("prev", previous_signal.shape)
+        print("cur", current_signal.shape)
         result = combinator(previous_signal, current_signal)
         self.previous = result[len(clock_signal.ts):]
         res = result[:len(clock_signal.ts)]
@@ -123,35 +125,41 @@ class DrumMachine(Module):
         self.tracks = tracks
         self.dummy = SineSource(frequency=P(220, key='w'))
 
+    @staticmethod
+    def extend_tracks(clock_signal, track, samples_per_beat):
+        triggers = DrumMachine._track_to_triggers(track, samples_per_beat)
+        # these have different lengths depending on the number of bars given. loop until end of frame.
+        orig_trig = triggers[:]
+        while len(triggers) < len(clock_signal.ts):
+            triggers = np.append(triggers, orig_trig, axis=0)
+        # we started all triggers from time 0. apply the offset
+        offset = clock_signal.sample_indices[0] % len(triggers)
+        print("offset", offset)
+        triggers = np.roll(triggers, offset)
+        res = triggers[:len(clock_signal.ts)]
+        return res
+
     def out(self, clock_signal: ClockSignal):
         # a beat is 1/4 bar. bps = bpm/60. 1/bps = seconds / beat. sampling_freq = samples / second.
         # -> samples / beat = sampling_freq / bps
         bpm = np.mean(self.bpm(clock_signal))
         samples_per_beat = SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
-        assert(samples_per_beat >= 2)
+        if samples_per_beat < 2:
+            print("Warning: Cannot deal with samples_per_beat < 2")
+            samples_per_beat = 2
         print("samples_per_beat", samples_per_beat)
         # generate all trigger tracks.
-        trigger_tracks = []
-        for track in self.tracks:
-            triggers = DrumMachine._track_to_triggers(track, samples_per_beat)
-            # these have different lengths depending on the number of bars given. loop until end of frame.
-            while len(triggers) < len(clock_signal.ts):
-                triggers = np.tile(triggers, 2)
-            # we started all triggers from time 0. apply the offset
-            offset = clock_signal.sample_indices[0] % clock_signal.num_samples
-            triggers = np.roll(triggers, offset)
-            trigger_tracks.append(triggers[:len(clock_signal.ts)])
-        # for x in trigger_tracks:
-        #     plt.plot(x)
-        #     plt.show()
-
+        trigger_tracks = [DrumMachine.extend_tracks(clock_signal, track, samples_per_beat) for track in self.tracks]
         # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
         # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
         signals = []
         for track, trigger_track in zip(self.tracks, trigger_tracks):
             signal = track.trigger_modulator(clock_signal, trigger_track, track.envelope_gen)
             signals.append(signal)
-        return functools.reduce(np.add, signals)
+        sum_of_tracks = functools.reduce(np.add, signals)
+        #plt.plot(sum_of_tracks)
+        #plt.show()
+        return sum_of_tracks
 
     @staticmethod
     def _track_to_triggers(track: Track, samples_per_beat):
@@ -166,30 +174,6 @@ class DrumMachine(Module):
         #plt.show()
         return triggers
 
-
-
-
-
-
-
-
-kick = Track(name="kick",
-             pattern=[1, 0, 0, 1, 1, 0, 0, 1],
-             note_values=1 / 8,
-             envelope_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
-             trigger_modulator=TriggerModulator(),
-             )
-snare = Track(name="snare",
-              pattern=[0, 1, 0, 1],
-              note_values=1 / 4,
-              envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
-              trigger_modulator=TriggerModulator(),
-              )
-
-# t1 = DrumMachine._track_to_triggers(kick, 4)
-# t2 = DrumMachine._track_to_triggers(snare, 4)
-# print(t1)
-# print(t2)
 
 
 class Drummin(Module):
@@ -207,13 +191,13 @@ class Drummin(Module):
                       envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
                       trigger_modulator=TriggerModulator(),
                       )
-        hihat = Track(name="hihat",
-                      pattern=[1, 1, 1, 1, 1, 1, 1, 1],
-                      note_values=1 / 8,
-                      envelope_gen=ADSREnvelopeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
-                      trigger_modulator=TriggerModulator(),
-                      )
-        self.output = DrumMachine(bpm=Parameter(100, key='q'), tracks=[kick, snare, hihat])
+        # hihat = Track(name="hihat",
+        #               pattern=[1, 1, 1, 1, 1, 1, 1, 1],
+        #               note_values=1 / 8,
+        #               envelope_gen=ADSREnvelopeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
+        #               trigger_modulator=TriggerModulator(),
+        #               )
+        self.output = DrumMachine(bpm=Parameter(100, key='q'), tracks=[kick, snare])
         self.out = self.output
 
 
