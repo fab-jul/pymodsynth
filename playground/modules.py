@@ -224,9 +224,9 @@ class Parameter(Constant):
             clip: If True, clip to [lo, hi] in `set`.
         """
         super().__init__(value)
-        if not lo:
+        if lo is None:
             lo = 0.1 * value
-        if not hi:
+        if hi is None:
             hi = 1.9 * value
         if hi < lo:
             raise ValueError
