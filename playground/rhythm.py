@@ -1,7 +1,7 @@
 import dataclasses
 import functools
 
-from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY
+from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY, plot_module, StepSequencing
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable
@@ -10,6 +10,14 @@ import matplotlib.pyplot as plt
 
 P = Parameter
 
+
+class RectangleEnvelopeGen:
+    def __init__(self, length: Module):
+        self.length = length
+
+    def __call__(self, clock_signal: ClockSignal, desired_indices):
+        length = self.length(clock_signal)[0, 0]
+        return [np.ones((length,)) for i in desired_indices]
 
 class ADSREnvelopeGen:
     """
@@ -120,6 +128,7 @@ class DrumMachine(Module):
     """
 
     def __init__(self, bpm: Module, tracks: List[Track]):
+        super().__init__()
         self.bpm = bpm
         self.tracks = tracks
         self.dummy = SineSource(frequency=P(220, key='w'))
@@ -133,7 +142,7 @@ class DrumMachine(Module):
             triggers = np.append(triggers, orig_trig, axis=0)
         # we started all triggers from time 0. apply the offset
         offset = clock_signal.sample_indices[0] % len(triggers)
-        triggers = np.roll(triggers, offset)
+        triggers = np.roll(triggers, -offset)
         res = triggers[:len(clock_signal.ts)]
         return res
 
@@ -150,6 +159,10 @@ class DrumMachine(Module):
         trigger_tracks = [DrumMachine.extend_tracks(clock_signal, track, samples_per_beat) for track in self.tracks]
         # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
         # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
+
+        for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_tracks):
+            self.collect(name) << tri
+
         signals = []
         for track, trigger_track in zip(self.tracks, trigger_tracks):
             signal = track.trigger_modulator(clock_signal, trigger_track, track.envelope_gen)
@@ -157,6 +170,8 @@ class DrumMachine(Module):
             # modulate envelope with its carrier
             carrier = track.carrier(clock_signal)[:len(signal)]
             signal = signal * carrier
+
+            self.collect(track.name) << signal
 
             signals.append(signal)
         sum_of_tracks = functools.reduce(np.add, signals)
@@ -183,29 +198,41 @@ class Drummin(Module):
 
     def __init__(self):
         kick = Track(name="kick",
-                     pattern=[1, 0, 0, 1, 1, 0, 0, 0],
+                     pattern=[1, 0, 1, 0, 1, 0, 1, 0],
                      note_values=1 / 8,
-                     envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(10), sustain=P(1), release=P(200), hold=P(2000)),
-                     carrier=TriangleSource(frequency=P(40)),
+                     envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(2000)),
+                     carrier=TriangleSource(frequency=P(60)),
                      trigger_modulator=TriggerModulator(),
                      )
-        snare = Track(name="snare",
-                      pattern=[0, 0, 1, 0, 0, 0, 1, 0],
-                      note_values=1 / 8,
-                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
-                      carrier=TriangleSource(frequency=P(330)),
-                      trigger_modulator=TriggerModulator(),
-                      )
+        # snare = Track(name="snare",
+        #               pattern=[1, 0, 1, 0, 1, 0, 1, 0],
+        #               note_values=1 / 8,
+        #               envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
+        #               carrier=TriangleSource(frequency=P(330)),
+        #               trigger_modulator=TriggerModulator(),
+        #               )
         hihat = Track(name="hihat",
+                      pattern=[0, 1, 0, 1, 0, 1, 0, 1],
+                      note_values=1 / 8,
+                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
+                      trigger_modulator=TriggerModulator(),
+                      carrier=TriangleSource(frequency=P(6000)),
+                      )
+        notes = Track(name="notes",
                       pattern=[1, 1, 1, 1, 1, 1, 1, 1],
                       note_values=1 / 8,
-                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(20), hold=P(100)),
+                      envelope_gen=RectangleEnvelopeGen(length=P(4000)),
                       trigger_modulator=TriggerModulator(),
-                      carrier=TriangleSource(frequency=P(8000)),
+                      carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00005)),
                       )
-        self.output = DrumMachine(bpm=Parameter(100, key='q'), tracks=[kick, snare, hihat])
-        self.out = self.output
+
+        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, hihat, notes])
+
+        #self.synthie = StepSequencing()
+
+        self.out = self.output #+ self.synthie
 
 
-
+if __name__ == "__main__":
+    plot_module(Drummin, plot=(".*",), num_steps=50)
 

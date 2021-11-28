@@ -1070,16 +1070,16 @@ class StepSequencing(Module):
         super().__init__()
         self.base_freq = Parameter(220, lo=220/4, hi=440, knob="r_mixer_hi")
         self.base_freq2 = Parameter(220/4, lo=220/16, hi=440, knob="r_mixer_mi")
-        self.bpm = Parameter(65, lo=10, hi=300, knob="r_tempo")
-        bpm_melody = self.bpm * 4
+        self.bpm = Parameter(100, lo=10, hi=300, knob="r_tempo")
+        bpm_melody = self.bpm * 2
         self.melody_highs = StepSequencer(
             SawSource,
             self.base_freq,
             bpm_melody,
-            melody=[1,5,9,12,1,5,12,9, 1,9,5,12, 1,12,9,5],
+            melody=[1,2,3,4,5,6,7,8],
             #melody=[1, 2, 3, 4],
             steps=[1],
-            gate='H',
+            gate='SSSH',
             melody_randomizer=Parameter(0, knob="r_4")
         )
         self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
@@ -1100,7 +1100,7 @@ class StepSequencing(Module):
             bpm=self.bpm,
             melody=[1, 5, 3, 5],
             steps=[1],
-            gate="HSHS")
+            gate="SSSH")
 
 
 #        self.step_highs = StepSequencer(
@@ -1193,10 +1193,10 @@ def _intersperse_gaps(vs, gap_len=100):
     return o
 
 
-def plot_module(plot=("(melody1|bass).*",), num_steps=4):
-    m = FooBar()
-    m.env_param_foo.set(10000)
-    m.bpm.set(1000)
+def plot_module(synthie_cls, plot=("(melody1|bass).*",), num_steps=4):
+    m = synthie_cls()
+    #m.env_param_foo.set(10000)
+    #m.bpm.set(1000)
 
     clock = Clock(num_samples=2048, num_channels=1, sample_rate=44100)
     ts, output = m.collect_data(num_steps=num_steps, clock=clock)

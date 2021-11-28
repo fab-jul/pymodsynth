@@ -218,7 +218,8 @@ class MakeSignal:
         if t - self.time_of_last_timer_update >= 1.:
             call_timers()
             self.time_of_last_timer_update = t
-        # delta = t - self.last_t
+        #delta = t - self.last_t
+        #print(delta)
         self.last_t = t
         if status:
             print(status, file=sys.stderr)
