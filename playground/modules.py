@@ -1,6 +1,6 @@
 import operator
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping, Optional, NamedTuple
+from typing import Mapping, Union, MutableMapping, Optional, NamedTuple, Type, TypeVar, Set
 
 import numpy as np
 from playground import midi_lib
@@ -79,6 +79,9 @@ class State:
         self._value = value
 
 
+T = TypeVar("T")
+
+
 class Module:
     """
     Module :: Signal -> Signal, in particular:
@@ -126,13 +129,14 @@ class Module:
     def __call__(self, clock_signal: ClockSignal) -> np.ndarray:
         return self.out(clock_signal)
 
-    def find_params(self) -> MutableMapping[str, "Parameter"]:
-        return self._find(Parameter)
+    def get_params_by_name(self) -> MutableMapping[str, "Parameter"]:
+        return self._get(Parameter)
 
-    def find_state(self) -> MutableMapping[str, "State"]:
-        return self._find(State)
+    def get_states_by_name(self) -> MutableMapping[str, "State"]:
+        return self._get(State)
 
-    def _find(self, cls, prefix=""):
+    def _get(self, cls: Type[T], prefix="") -> MutableMapping[str, T]:
+        """Recursively find all instances of `cls`."""
         result = {}
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
@@ -142,14 +146,14 @@ class Module:
                 continue
             # If it's a Module, we go into the recursion.
             if isinstance(var_instance, Module):
-                result.update(var_instance._find(cls, prefix=f"{var_name}."))
+                result.update(var_instance._get(cls, prefix=f"{var_name}."))
         return result
 
     # NOTE: We need to take the params and state, as we cannot
     # find it anymore, since we have new classes when we call this!
     def copy_params_and_state_from(self, src_params, src_state):
-        _copy(src=src_params, target=self.find_params())
-        _copy(src=src_state, target=self.find_state())
+        _copy(src=src_params, target=self.get_params_by_name())
+        _copy(src=src_state, target=self.get_states_by_name())
 
 
 class _MathModule(Module):
@@ -532,7 +536,7 @@ class ClickModulation(Module):
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3), key="f"))
+        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
         self.sin1 = SineSource(frequency=Parameter(440))
         self.sin2 = SineSource(frequency=Parameter(220))
 

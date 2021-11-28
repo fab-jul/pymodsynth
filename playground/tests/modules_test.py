@@ -90,7 +90,7 @@ def test_parameter_finding():
             self.sine3 = modules.SineSource(frequency=not_assigned_to_self)
 
     synth = Synth()
-    params = synth.find_params()
+    params = synth.get_params_by_name()
     param_values = {k: param.get() for k, param in params.items()}
     assert param_values == {
         "nested.p": 1.,

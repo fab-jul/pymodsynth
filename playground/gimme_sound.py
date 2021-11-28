@@ -163,31 +163,37 @@ class SynthesizerController:
     def _set_output_gen(self, output_gen: modules.Module):
         """Called on init and when modules.py changes."""
         self.output_gen = output_gen
-        self.params = self.output_gen.find_params()
-        self.state = self.output_gen.find_state()
+        self.params = self.output_gen.get_params_by_name()
+        self.state = self.output_gen.get_states_by_name()
         self._update_key_mapping()
         self._update_knob_mapping()
 
     def _update_key_mapping(self):
-        self.key_mapping = {param.key: param
-                            for _, param in self.params.items()
-                            if param.key}
-
+        self.key_mapping = {}
+        for param in set(self.params.values()):
+            if not param.key:
+                continue
+            if param.key in self.key_mapping:
+                print(f"*** Duplicate key, `{param.key}` already used! Ignoring...", file=sys.stderr)
+                continue
+            self.key_mapping[param.key] = param
         print("Did update keymapping, keys=", self.key_mapping.keys())
         self.signal_window.set_interesting_keys(self.key_mapping.keys())
 
     def _update_knob_mapping(self):
         if not self.midi_controller:
             return
-
-        self.knob_mapping = {self.known_knobs.get(param.knob): param
-                             for _, param in self.params.items()
-                             if param.knob}
-
+        self.knob_mapping = {}
         self.midi_controller.reset_interesting_knobs()
-        for knob in self.knob_mapping:
+        for param in set(self.params.values()):
+            if not param.knob:
+                continue
+            if param.knob in self.knob_mapping:
+                print(f"*** Duplicate knob, `{param.knob}` already used! Ignoring...", file=sys.stderr)
+                continue
+            knob = self.known_knobs.get(param.knob)
+            self.knob_mapping[knob] = param
             self.midi_controller.register_interesting_knob(knob)
-
         print("Did update interesting knobs to", self.midi_controller.interesting_knobs)
 
     def _process_midi_controller_events(self):
