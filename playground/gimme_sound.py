@@ -10,13 +10,11 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
-import midi_lib
 import dataclasses
 import importlib
 import os.path
 import traceback
 
-import filewatcher
 import sys
 import time
 import typing
@@ -24,6 +22,8 @@ import typing
 import numpy as np
 import sounddevice as sd
 
+from playground import filewatcher
+from playground import midi_lib
 from playground import window_lib
 from playground import modules
 
