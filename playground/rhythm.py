@@ -185,23 +185,23 @@ class Drummin(Module):
         kick = Track(name="kick",
                      pattern=[1, 0, 0, 1, 1, 0, 0, 0],
                      note_values=1 / 8,
-                     envelope_gen=ADSREnvelopeGen(attack=P(30), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
-                     carrier=SineSource(frequency=P(80)),
+                     envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(10), sustain=P(1), release=P(200), hold=P(2000)),
+                     carrier=TriangleSource(frequency=P(40)),
                      trigger_modulator=TriggerModulator(),
                      )
         snare = Track(name="snare",
-                      pattern=[0, 1, 0, 1],
-                      note_values=1 / 4,
-                      envelope_gen=ADSREnvelopeGen(attack=P(30), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
-                      carrier=SineSource(frequency=P(220)),
+                      pattern=[0, 0, 1, 0, 0, 0, 1, 0],
+                      note_values=1 / 8,
+                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
+                      carrier=TriangleSource(frequency=P(330)),
                       trigger_modulator=TriggerModulator(),
                       )
         hihat = Track(name="hihat",
                       pattern=[1, 1, 1, 1, 1, 1, 1, 1],
                       note_values=1 / 8,
-                      envelope_gen=ADSREnvelopeGen(attack=P(30), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
+                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(20), hold=P(100)),
                       trigger_modulator=TriggerModulator(),
-                      carrier=SineSource(frequency=P(8000)),
+                      carrier=TriangleSource(frequency=P(8000)),
                       )
         self.output = DrumMachine(bpm=Parameter(100, key='q'), tracks=[kick, snare, hihat])
         self.out = self.output
