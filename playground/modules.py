@@ -136,9 +136,11 @@ class Module:
         result = {}
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
-                var_instance.name = f"{prefix}{var_name}"
-                result[var_name] = var_instance
+                full_name = f"{prefix}{var_name}"
+                var_instance.name = full_name
+                result[full_name] = var_instance
                 continue
+            # If it's a Module, we go into the recursion.
             if isinstance(var_instance, Module):
                 result.update(var_instance._find(cls, prefix=f"{var_name}."))
         return result
@@ -280,8 +282,8 @@ class Random(Module):
 class SineSource(Module):
     def __init__(self,
                  frequency: Module = Constant(440.),
-                 amplitude=Parameter(1.0),
-                 phase=Parameter(0.0)):
+                 amplitude=Constant(1.0),
+                 phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -301,7 +303,7 @@ class SineSource(Module):
 
 @tests_helper.mark_for_testing()
 class SawSource(Module):
-    def __init__(self, frequency: Module = Constant(440.), amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -319,7 +321,7 @@ class SawSource(Module):
 
 @tests_helper.mark_for_testing()
 class TriangleSource(Module):
-    def __init__(self, frequency: Module = Constant(440.), amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -336,7 +338,7 @@ class TriangleSource(Module):
 
 @tests_helper.mark_for_testing(inp=SineSource, carrier_frequency=SineSource)
 class SineModulator(Module):
-    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
+    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Constant(1.0)):
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
@@ -523,14 +525,14 @@ def lift(a):
 class ClickModulation(Module):
     def __init__(self):
         self.wild_triangles = sum(TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3))
-        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
+        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Constant(100)))
         # test_module(self.out, num_frames=10)
 
 @tests_helper.mark_for_testing()
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
+        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3), key="f"))
         self.sin1 = SineSource(frequency=Parameter(440))
         self.sin2 = SineSource(frequency=Parameter(220))
 

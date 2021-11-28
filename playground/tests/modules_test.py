@@ -69,3 +69,36 @@ def test_math(ts):
         _assert_outputs_similar(ts, other / const_ten, modules.Constant(0.5))
         _assert_outputs_similar(ts, other + const_ten, modules.Constant(15.))
         _assert_outputs_similar(ts, other - const_ten, modules.Constant(-5.))
+
+
+def test_parameter_finding():
+
+    class Nested(modules.Module):
+        def __init__(self):
+            self.p = modules.Parameter(1.)
+
+    class Synth(modules.Module):
+        def __init__(self):
+            self.p = modules.Parameter(2.)
+            # A parameter that has the same name as in a module.
+            self.frequency = modules.Parameter(3.)
+            self.sine0 = modules.SineSource(frequency=self.frequency)
+            self.nested = Nested()
+            self.sine1 = modules.SineSource(frequency=modules.Parameter(4.))
+            self.sine2 = modules.SineSource(frequency=modules.Parameter(5.))
+            not_assigned_to_self = modules.Parameter(6.)
+            self.sine3 = modules.SineSource(frequency=not_assigned_to_self)
+
+    synth = Synth()
+    params = synth.find_params()
+    param_values = {k: param.get() for k, param in params.items()}
+    assert param_values == {
+        "nested.p": 1.,
+        "p": 2.,
+        "frequency": 3.,
+        "sine0.frequency": 3.,
+        "sine1.frequency": 4.,
+        "sine2.frequency": 5.,
+        "sine3.frequency": 6.,
+    }
+
