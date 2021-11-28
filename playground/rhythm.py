@@ -1,3 +1,6 @@
+import dataclasses
+import functools
+
 from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY
 import random
 import numpy as np
@@ -33,12 +36,55 @@ class ADSREnvelopeGen:
 
         res = []
         for i in desired_indices:
-            attack = np.linspace(0, 1, t_attack[i,:])
-            decay = np.linspace(1, sustain_height, t_decay[i,:])
-            hold = np.ones(t_hold[i,:]) * sustain_height[i,:]
-            release = np.linspace(sustain_height[i,:], 0, t_release[i,:])
+            attack = np.linspace(0, 1, t_attack[i, 0])
+            decay = np.linspace(1, sustain_height[i, 0], t_decay[i, 0])
+            hold = np.ones(t_hold[i, 0]) * sustain_height[i, 0]
+            release = np.linspace(sustain_height[i, 0], 0, t_release[i, 0])
             envelope = np.concatenate((attack, decay, hold, release), 0)
             res.append(envelope)
+        return res
+
+
+class TriggerModulator:
+    """
+        Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
+        Combine overlaps with a suitable function: max, fst, snd, add, ...
+        """
+    def __init__(self):
+        self.previous = None
+
+    # def get_previous(self, num_samples):
+    #     if self.previous is not None:
+    #         chunk = self.previous[:num_samples, :]
+    #         self.previous = self.previous[num_samples:, :]
+    #     if len(chunk) > num_samples:
+    #         chunk = np.pad(chunk, pad_width=(0, num_samples - len(chunk)))
+    #     return chunk
+
+    def __call__(self, clock_signal: ClockSignal, triggers, envelope_gen, combinator=np.add):
+        """Generate one envelope per trigger"""
+
+        trigger_indices = np.nonzero(triggers)[0]
+        envelopes = envelope_gen(clock_signal, trigger_indices)
+        current_signal = np.zeros(shape=clock_signal.ts.shape)
+        previous_signal = self.previous if self.previous is not None and len(self.previous) > 0 else np.zeros(shape=clock_signal.ts.shape)
+        if envelopes:
+            # does any envelope go over frame border?
+            latest_envelope_end = max([i + len(env) for i, env in zip(trigger_indices, envelopes)])
+            if latest_envelope_end > clock_signal.num_samples:
+                remainder = latest_envelope_end - clock_signal.num_samples
+            else:
+                remainder = 0
+            current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
+            for i, envelope in zip(trigger_indices, envelopes):
+                current_signal[i:i+len(envelope)] = envelope.reshape((-1, 1))
+            # combine the old and new signal using the given method
+            max_len = max(len(previous_signal), len(current_signal))
+            previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
+            current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+        result = combinator(previous_signal, current_signal)
+        self.previous = result[len(clock_signal.ts):]
+        res = result[:len(clock_signal.ts)]
         return res
 
 
@@ -47,6 +93,8 @@ class Track(NamedTuple):
     pattern: List[int]
     note_values: float
     envelope_gen: Callable  # regular function or Module
+    trigger_modulator: TriggerModulator
+
 
 
 class DrumMachine(Module):
@@ -75,14 +123,7 @@ class DrumMachine(Module):
         self.tracks = tracks
         self.dummy = SineSource(frequency=P(220, key='w'))
 
-    def _get_old_signal(self):
-
-        return None
-
     def out(self, clock_signal: ClockSignal):
-        if old := self._get_old_signal():
-            return old
-
         # a beat is 1/4 bar. bps = bpm/60. 1/bps = seconds / beat. sampling_freq = samples / second.
         # -> samples / beat = sampling_freq / bps
         bpm = np.mean(self.bpm(clock_signal))
@@ -106,14 +147,16 @@ class DrumMachine(Module):
 
         # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
         # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
-
-
-        return None
+        signals = []
+        for track, trigger_track in zip(self.tracks, trigger_tracks):
+            signal = track.trigger_modulator(clock_signal, trigger_track, track.envelope_gen)
+            signals.append(signal)
+        return functools.reduce(np.add, signals)
 
     @staticmethod
     def _track_to_triggers(track: Track, samples_per_beat):
         """Create a time signal of triggers. The length corresponds to the number of bars in the given track pattern"""
-        _, pattern, note_value, _ = track
+        _, pattern, note_value, _, _ = track
         samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16*4 = (1/4 * samples_per_beat) per note
         indices = np.nonzero(pattern)[0] * samples_per_note
         triggers = np.zeros(len(pattern) * samples_per_note)
@@ -124,33 +167,23 @@ class DrumMachine(Module):
         return triggers
 
 
-class TriggerModulator:
-    """
-        Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
-        Combine overlaps with a suitable function: max, fst, snd, add, ...
-        """
-    def __init__(self):
 
-    def __call__(self, clock_signal: ClockSignal, triggers, envelope_gen):
-        """Generate only one envelope per trigger"""
-        trigger_indices = np.nonzero(triggers)
-        trigger_ts = clock_signal.ts[trigger_indices]
-        trigger_clock_indices = clock_signal.sample_indices[trigger_indices]
-        # the envelope_gen should depend on trigger_ts and trigger_clock_indices only
-        envelopes = []
-        for ts, clk_ind in zip (trigger_ts, trigger_clock_indices):
-            envelopes.append(envelope_gen(ts, clk_ind))
+
+
+
 
 
 kick = Track(name="kick",
              pattern=[1, 0, 0, 1, 1, 0, 0, 1],
              note_values=1 / 8,
              envelope_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
+             trigger_modulator=TriggerModulator(),
              )
 snare = Track(name="snare",
               pattern=[0, 1, 0, 1],
               note_values=1 / 4,
               envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
+              trigger_modulator=TriggerModulator(),
               )
 
 # t1 = DrumMachine._track_to_triggers(kick, 4)
@@ -166,18 +199,21 @@ class Drummin(Module):
                      pattern=[1, 0, 0, 1, 1, 0, 0, 0],
                      note_values=1 / 8,
                      envelope_gen=ADSREnvelopeGen(attack=P(200), decay=P(10), sustain=P(0.5), release=P(200), hold=P(200)),
+                     trigger_modulator=TriggerModulator(),
                      )
         snare = Track(name="snare",
                       pattern=[0, 1, 0, 1],
                       note_values=1 / 4,
                       envelope_gen=ADSREnvelopeGen(attack=P(100), decay=P(10), sustain=P(0.2), release=P(100), hold=P(50)),
+                      trigger_modulator=TriggerModulator(),
                       )
         hihat = Track(name="hihat",
                       pattern=[1, 1, 1, 1, 1, 1, 1, 1],
                       note_values=1 / 8,
                       envelope_gen=ADSREnvelopeGen(attack=P(50), decay=P(10), sustain=P(0.1), release=P(100), hold=P(30)),
+                      trigger_modulator=TriggerModulator(),
                       )
-        self.output = DrumMachine(bpm=Parameter(44000, key='q'), tracks=[kick, snare, hihat])
+        self.output = DrumMachine(bpm=Parameter(100, key='q'), tracks=[kick, snare, hihat])
         self.out = self.output
 
 
