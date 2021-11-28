@@ -4,14 +4,23 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
-## Code Health - Fix this asap
 
-- [ ] Make sure everything we have in main works on macOS and windows
-- [ ] Add some basic unit tests for the sound loop and for main modules
+## Contribute
+
+### Guidelines
+
+#### Remove merged feature branches
+
+```sh
+BRANCH=<branch>
+git branch -d "$BRANCH"       # Delete locally
+git push origin -d "$BRANCH"  # Delete remotely
+```
 
 ## Milestones
 
 - Framework:
+  - [ ] Make sure everything we have in main works on macOS and windows
   - [ ] Visualize arbitrary signals.
   - [ ] Automatic testing (github integration?)
   - [ ] Cache outputs.
