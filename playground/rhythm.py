@@ -57,7 +57,7 @@ class _MathEnvGen(EnvelopeGen):
     def _maybe_call(env_gen_or_number, clock_signal, desired_indices):
         if isinstance(env_gen_or_number, EnvelopeGen):
             return env_gen_or_number(clock_signal, desired_indices)
-        return np.array(env_gen_or_number)  # so we can broadcast the number
+        return np.array([env_gen_or_number])  # so we can broadcast the number
 
 
 ############################################################################################################
@@ -301,7 +301,7 @@ class Drummin(Module):
 
     def __init__(self):
         kick = Track(name="kick",
-                     pattern=[1, 0, 0, 0, 1, 1, 0, 0],
+                     pattern=[1, 0, 1, 0, 1, 0, 1, 0],
                      note_values=1 / 8,
                      #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(2000)),
                      envelope_gen=ExpEnvelopeGen(attack_length=P(100), attack_curvature=P(3), decay_length=P(1000), decay_curvature=P(2)),
@@ -309,8 +309,8 @@ class Drummin(Module):
                      trigger_modulator=TriggerModulator(),
                      )
         snare = Track(name="snare",
-                      pattern=[0, 0, 1, 0, 0, 0, 1, 0],
-                      note_values=1 / 8,
+                      pattern=[0, 0, 0, 0, 0, 0, 0, 0,    0, 0, 0, 0, 0, 0, 0, 0,    0, 1, 0, 1, 0, 0, 0, 0,  0, 1, 0, 1, 0, 1, 1, 1],
+                      note_values=1 / 16,
                       #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
                       envelope_gen=ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
                                                   decay_curvature=P(3)) |
@@ -323,20 +323,20 @@ class Drummin(Module):
                       pattern=[0, 1, 0, 1, 0, 1, 0, 1],
                       note_values=1 / 8,
                       #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
-                      envelope_gen=ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(1200),
-                                                  decay_curvature=P(200)),
+                      envelope_gen=ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
+                                                  decay_curvature=P(200)) * 0.5,
                       carrier=NoiseSource(),
                       trigger_modulator=TriggerModulator(),
                       )
-        # notes = Track(name="notes",
-        #               pattern=[1, 1, 1, 1, 1, 1, 1, 1],
-        #               note_values=1 / 8,
-        #               envelope_gen=RectangleEnvelopeGen(length=P(4000)),
-        #               trigger_modulator=TriggerModulator(),
-        #               carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00005)),
-        #               )
+        notes = Track(name="notes",
+                      pattern=[1, 0, 0, 0,   1, 1, 0, 0,   0, 1, 1, 0,   0, 0, 1, 0],
+                      note_values=1 / 4,
+                      envelope_gen=RectangleEnvelopeGen(length=P(22200)),
+                      trigger_modulator=TriggerModulator(),
+                      carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00003)) * 0.05,
+                      )
 
-        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, snare])
+        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, snare, hihat, notes])
 
         #self.synthie = StepSequencing()
 
