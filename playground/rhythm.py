@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 P = Parameter
 
 
-class EnvelopeGen:
+class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keying work! Do this correctly.
     def __mul__(self, other):
         return _MathEnvGen(operator.mul, self, other)
 
@@ -39,6 +39,15 @@ class EnvelopeGen:
 
     def __or__(self, other):
         return _MathEnvGen(lambda first, second: np.concatenate([first, second]), self, other)
+
+    def __lshift__(self, other):
+        # add zeros to the right
+        return self | (RectangleEnvelopeGen(length=other) * 0.0)
+
+    def __rshift__(self, other):
+        # add zeros to the left
+        return (RectangleEnvelopeGen(length=other) * 0.0) | self
+
 
 class _MathEnvGen(EnvelopeGen):
     """Borrowed from modules._MathModule"""
@@ -80,6 +89,22 @@ def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     return xs * (end_val - start_val) + start_val
 
 
+class EnvelopeSource(Module):
+    def __init__(self, envelope_gen):
+        super().__init__()
+        self.envelope_gen = envelope_gen
+        self.sign_exponent = 0  # TODO: haha
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        env = self.envelope_gen(clock_signal, [0])[0]  # get a single envelope, and unpack it from list
+        start = clock_signal.sample_indices[0] % len(env)
+        signal = env
+        while len(signal) < len(clock_signal.ts):
+            signal = np.concatenate([signal, env * (-1)**self.sign_exponent])
+        signal = np.roll(signal, -start)
+        res = np.reshape(signal[:len(clock_signal.ts)], newshape=clock_signal.ts.shape)
+        self.collect("dings") << res
+        return res
 
 
 # import matplotlib.pyplot as plt
@@ -234,7 +259,6 @@ class DrumMachine(Module):
         super().__init__()
         self.bpm = bpm
         self.tracks = tracks
-        self.dummy = SineSource(frequency=P(220, key='w'))
 
     @staticmethod
     def extend_tracks(clock_signal, track, samples_per_beat):
@@ -300,6 +324,10 @@ class DrumMachine(Module):
 class Drummin(Module):
 
     def __init__(self):
+        super().__init__()
+
+        #self.out = EnvelopeSource(ExpEnvelopeGen(attack_length=P(100), attack_curvature=P(3), decay_length=P(100), decay_curvature=P(2)))
+
         kick = Track(name="kick",
                      pattern=[1, 0, 1, 0, 1, 0, 1, 0],
                      note_values=1 / 8,
@@ -309,7 +337,8 @@ class Drummin(Module):
                      trigger_modulator=TriggerModulator(),
                      )
         snare = Track(name="snare",
-                      pattern=[0, 0, 0, 0, 0, 0, 0, 0,    0, 0, 0, 0, 0, 0, 0, 0,    0, 1, 0, 1, 0, 0, 0, 0,  0, 1, 0, 1, 0, 1, 1, 1],
+                      #pattern=[0, 0, 0, 0, 0, 0, 0, 0,    0, 0, 0, 0, 0, 0, 0, 0,    0, 1, 0, 1, 0, 0, 0, 0,  0, 1, 0, 1, 0, 1, 1, 1],
+                      pattern=[0, 0, 1, 0, 0, 1, 0, 1],
                       note_values=1 / 16,
                       #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
                       envelope_gen=ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
@@ -336,7 +365,7 @@ class Drummin(Module):
                       carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00003)) * 0.05,
                       )
 
-        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, snare, hihat, notes])
+        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, snare, hihat])
 
         #self.synthie = StepSequencing()
 
@@ -344,5 +373,5 @@ class Drummin(Module):
 
 
 if __name__ == "__main__":
-    plot_module(Drummin, plot=(".*",), num_steps=50)
+    plot_module(Drummin, plot=(".*",), num_steps=10)
 
