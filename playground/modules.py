@@ -476,6 +476,12 @@ class TriangleSource(Module):
         return out
 
 
+class NoiseSource(Module):
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        return np.random.random(clock_signal.ts.shape)
+
+
+
 class SineModulator(Module):
     def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
         super().__init__()

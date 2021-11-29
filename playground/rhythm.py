@@ -1,17 +1,117 @@
 import dataclasses
 import functools
+import operator
 
-from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY, plot_module, StepSequencing
+from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY, plot_module, StepSequencing, NoiseSource
 import random
 import numpy as np
-from typing import Dict, List, NamedTuple, Callable
+from typing import Dict, List, NamedTuple, Callable, Union
 
 import matplotlib.pyplot as plt
 
 P = Parameter
 
 
-class RectangleEnvelopeGen:
+class EnvelopeGen:
+    def __mul__(self, other):
+        return _MathEnvGen(operator.mul, self, other)
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        return _MathEnvGen(operator.truediv, self, other)
+
+    def __rtruediv__(self, other):
+        return _MathEnvGen(operator.truediv, other, self)
+
+    def __add__(self, other):
+        return _MathEnvGen(operator.add, self, other)
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        return _MathEnvGen(operator.sub, self, other)
+
+    def __rsub__(self, other):
+        return _MathEnvGen(operator.sub, other, self)
+
+    def __or__(self, other):
+        return _MathEnvGen(lambda first, second: np.concatenate([first, second]), self, other)
+
+class _MathEnvGen(EnvelopeGen):
+    """Borrowed from modules._MathModule"""
+    def __init__(self, op, left, right):
+        super().__init__()
+        self.op = op
+        self.left = left
+        self.right = right
+
+    def __call__(self, clock_signal: ClockSignal, desired_indices):
+        left = self._maybe_call(self.left, clock_signal, desired_indices)
+        right = self._maybe_call(self.right, clock_signal, desired_indices)
+        return [self.op(le, ri) for le, ri in zip(left, right)]
+
+    @staticmethod
+    def _maybe_call(env_gen_or_number, clock_signal, desired_indices):
+        if isinstance(env_gen_or_number, EnvelopeGen):
+            return env_gen_or_number(clock_signal, desired_indices)
+        return np.array(env_gen_or_number)  # so we can broadcast the number
+
+
+############################################################################################################
+
+
+# TODO: generalize envelope generators:
+# concatenate arbitrary number of function-segments.
+# a segment's end equals the next segment's start.
+# segments like: linear, exponential, logarithmic, polynomial?, sinusoidal?
+# https://theproaudiofiles.com/synthesis-101-envelope-parameters-uses/
+# TODO: loop envelopes to get new sources (EnvelopeSource)
+# TODO: white noise generator
+# TODO: should envelope generators have a parent class and implement the operations +-*/ and concat ?
+
+
+def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
+    """Produce num_samples samples of func between [0, curvature], but squished into [0,1]"""
+    xs = func(np.linspace(0, curvature, num_samples))
+    xs = (xs - xs[0]) / (np.max(xs) - xs[0])
+    return xs * (end_val - start_val) + start_val
+
+
+
+
+# import matplotlib.pyplot as plt
+# plt.plot(func_gen(lambda t: np.random.rand(len(t))*2-1, 100, 3))
+# plt.show()
+
+
+
+
+class ExpEnvelopeGen(EnvelopeGen):
+    def __init__(self, attack_length, decay_length, attack_curvature, decay_curvature):
+        self.attack_length = attack_length
+        self.decay_length = decay_length
+        self.attack_curvature = attack_curvature
+        self.decay_curvature = decay_curvature
+
+    def __call__(self, clock_signal: ClockSignal, desired_indices):
+        attack_length = self.attack_length(clock_signal)
+        decay_length = self.decay_length(clock_signal)
+        attack_curvature = self.attack_curvature(clock_signal)
+        decay_curvature = self.decay_curvature(clock_signal)
+
+        res = []
+        for i in desired_indices:
+            attack = func_gen(np.exp, attack_length[i, 0], attack_curvature[i, 0])
+            decay = func_gen(lambda t: np.log(1+t), decay_length[i, 0], decay_curvature[i, 0], 1, 0)
+            envelope = np.concatenate((attack, decay), 0)
+            res.append(envelope)
+        return res
+
+
+class RectangleEnvelopeGen(EnvelopeGen):
     def __init__(self, length: Module):
         self.length = length
 
@@ -19,7 +119,8 @@ class RectangleEnvelopeGen:
         length = self.length(clock_signal)[0, 0]
         return [np.ones((length,)) for i in desired_indices]
 
-class ADSREnvelopeGen:
+
+class ADSREnvelopeGen(EnvelopeGen):
     """
     Borrowed from modules.py
     New api for envelope generators: They pass clock_signal to their param-sources, but only generate an envelope
@@ -86,6 +187,8 @@ class TriggerModulator:
             current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
             for i, envelope in zip(trigger_indices, envelopes):
                 current_signal[i:i+len(envelope)] = envelope.reshape((-1, 1))
+                # plt.plot(envelope)
+                # plt.show()
         # combine the old and new signal using the given method
         max_len = max(len(previous_signal), len(current_signal))
         previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
@@ -160,8 +263,8 @@ class DrumMachine(Module):
         # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
         # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
 
-        for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_tracks):
-            self.collect(name) << tri
+        #for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_tracks):
+        #    self.collect(name) << tri
 
         signals = []
         for track, trigger_track in zip(self.tracks, trigger_tracks):
@@ -198,35 +301,42 @@ class Drummin(Module):
 
     def __init__(self):
         kick = Track(name="kick",
-                     pattern=[1, 0, 1, 0, 1, 0, 1, 0],
+                     pattern=[1, 0, 0, 0, 1, 1, 0, 0],
                      note_values=1 / 8,
-                     envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(2000)),
-                     carrier=TriangleSource(frequency=P(60)),
+                     #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(2000)),
+                     envelope_gen=ExpEnvelopeGen(attack_length=P(100), attack_curvature=P(3), decay_length=P(1000), decay_curvature=P(2)),
+                     carrier=TriangleSource(frequency=P(60)) + NoiseSource() * 0.05,
                      trigger_modulator=TriggerModulator(),
                      )
-        # snare = Track(name="snare",
-        #               pattern=[1, 0, 1, 0, 1, 0, 1, 0],
-        #               note_values=1 / 8,
-        #               envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
-        #               carrier=TriangleSource(frequency=P(330)),
-        #               trigger_modulator=TriggerModulator(),
-        #               )
+        snare = Track(name="snare",
+                      pattern=[0, 0, 1, 0, 0, 0, 1, 0],
+                      note_values=1 / 8,
+                      #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
+                      envelope_gen=ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
+                                                  decay_curvature=P(3)) |
+                                   ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5), decay_length=P(500),
+                                                  decay_curvature=P(1000)),
+                      carrier=TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6,
+                      trigger_modulator=TriggerModulator(),
+                      )
         hihat = Track(name="hihat",
                       pattern=[0, 1, 0, 1, 0, 1, 0, 1],
                       note_values=1 / 8,
-                      envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
+                      #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
+                      envelope_gen=ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(1200),
+                                                  decay_curvature=P(200)),
+                      carrier=NoiseSource(),
                       trigger_modulator=TriggerModulator(),
-                      carrier=TriangleSource(frequency=P(6000)),
                       )
-        notes = Track(name="notes",
-                      pattern=[1, 1, 1, 1, 1, 1, 1, 1],
-                      note_values=1 / 8,
-                      envelope_gen=RectangleEnvelopeGen(length=P(4000)),
-                      trigger_modulator=TriggerModulator(),
-                      carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00005)),
-                      )
+        # notes = Track(name="notes",
+        #               pattern=[1, 1, 1, 1, 1, 1, 1, 1],
+        #               note_values=1 / 8,
+        #               envelope_gen=RectangleEnvelopeGen(length=P(4000)),
+        #               trigger_modulator=TriggerModulator(),
+        #               carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00005)),
+        #               )
 
-        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, hihat, notes])
+        self.output = DrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, snare])
 
         #self.synthie = StepSequencing()
 
