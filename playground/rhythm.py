@@ -2,7 +2,7 @@ import dataclasses
 import functools
 import operator
 
-from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY, plot_module, StepSequencing, NoiseSource
+from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, SAMPLING_FREQUENCY, plot_module, StepSequencing, NoiseSource, Constant
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 P = Parameter
 
 
-class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keying work! Do this correctly.
+class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keying work!
     def __mul__(self, other):
         return _MathEnvGen(operator.mul, self, other)
 
@@ -42,11 +42,11 @@ class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keyi
 
     def __lshift__(self, other):
         # add zeros to the right
-        return self | (RectangleEnvelopeGen(length=other) * 0.0)
+        return self | (RectangleEnvelopeGen(length=Constant(other)) * 0.0)
 
     def __rshift__(self, other):
         # add zeros to the left
-        return (RectangleEnvelopeGen(length=other) * 0.0) | self
+        return (RectangleEnvelopeGen(length=Constant(other)) * 0.0) | self
 
 
 class _MathEnvGen(EnvelopeGen):
@@ -93,7 +93,7 @@ class EnvelopeSource(Module):
     def __init__(self, envelope_gen):
         super().__init__()
         self.envelope_gen = envelope_gen
-        self.sign_exponent = 0  # TODO: haha
+        self.sign_exponent = 0  # TODO: later haha
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         env = self.envelope_gen(clock_signal, [0])[0]  # get a single envelope, and unpack it from list
@@ -112,9 +112,26 @@ class EnvelopeSource(Module):
 # plt.show()
 
 
+class FuncEnvelopeGen(EnvelopeGen):
+    def __init__(self, func: Callable, length, curvature, start_val, end_val):
+        self.func = func
+        self.length = length
+        self.curvature = curvature
+        self.start_val = start_val
+        self.end_val = end_val
+
+    def __call__(self, clock_signal: ClockSignal, desired_indices):
+        length = self.length(clock_signal)
+        curvature = self.curvature(clock_signal)
+        start_val = self.start_val(clock_signal)
+        end_val = self.end_val(clock_signal)
+        res = []
+        for i in desired_indices:
+            res.append(func_gen(self.func, length[i], curvature[i], start_val[i], end_val[i]))
 
 
 class ExpEnvelopeGen(EnvelopeGen):
+    """An exp'ly rising edge followed by an exp'ly falling edge. Can be replaced by two FuncEnvelopeGens and (+)."""
     def __init__(self, attack_length, decay_length, attack_curvature, decay_curvature):
         self.attack_length = attack_length
         self.decay_length = decay_length
@@ -137,6 +154,7 @@ class ExpEnvelopeGen(EnvelopeGen):
 
 
 class RectangleEnvelopeGen(EnvelopeGen):
+    """Convenience envelope generator, can be replaced by FuncEnvelopeGen"""
     def __init__(self, length: Module):
         self.length = length
 
@@ -147,13 +165,12 @@ class RectangleEnvelopeGen(EnvelopeGen):
 
 class ADSREnvelopeGen(EnvelopeGen):
     """
-    Borrowed from modules.py
+    Borrowed from modules.py. Can be replaced by a sum of FuncEnvelopeGens.
     New api for envelope generators: They pass clock_signal to their param-sources, but only generate an envelope
     for desired indices. Those are clear from the trigger signal of the calling function.
     Therefore, __call__ takes a clock signal, a list of desired indices and returns a list of envelopes.
     TODO: consider if we should enhance the Module.call signature with optional desired indices.
     """
-
     def __init__(self, attack: Module, decay: Module, sustain: Module, release: Module, hold: Module):
         self.attack = attack
         self.decay = decay
@@ -228,18 +245,18 @@ class Track(NamedTuple):
     name: str
     pattern: List[int]
     note_values: float
-    envelope_gen: Callable  # regular function or Module
+    envelope_gen: Callable
     carrier: Module
     trigger_modulator: TriggerModulator
-
 
 
 class DrumMachine(Module):
     """
     Parametrize with trigger patterns for different tracks (kick, snare, hihat, ...).
     Trigger patterns go over any number of bars and repeat forever.
-    The trigger patterns live in bar-space, not time:
+    The trigger patterns live in bar-time, not sample-time:
     The trigger patterns will be spaced out in time according to the DrumMachine's bpm.
+    A beat (as in bpm) is 1/4 of a bar.
     A trigger has no length! The length of an envelope is the envelope generator's concern.
     Combining overlapping envelopes is the TriggerModulator's concern.
     Ways to write down a trigger pattern:
@@ -251,8 +268,8 @@ class DrumMachine(Module):
                     [2,2] -> [1,0,1,0]
                     Downside: How to do offbeats, or other patterns that don't start at 1?
         ...?
-    Currently supported: Direct with note_value, see Track class
-    Every track also has a envelope generator.
+    Currently supported: Direct with note_value, see Track class.
+    Every track has its own envelope generator and a carrier wavefunction to control the pitch.
     """
 
     def __init__(self, bpm: Module, tracks: List[Track]):
@@ -261,7 +278,21 @@ class DrumMachine(Module):
         self.tracks = tracks
 
     @staticmethod
-    def extend_tracks(clock_signal, track, samples_per_beat):
+    def _track_to_triggers(track: Track, samples_per_beat):
+        """Create a time signal of triggers. The length corresponds to the number of bars in the given track pattern"""
+        _, pattern, note_value, _, _, _ = track
+        samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16*4 = (1/4 * samples_per_beat) per note
+        indices = np.nonzero(pattern)[0] * samples_per_note
+        triggers = np.zeros(len(pattern) * samples_per_note)
+        # print("indices", indices)
+        triggers[indices] = 1
+        # plt.plot(triggers)
+        # plt.show()
+        return triggers
+    
+    @staticmethod
+    def make_trigger_signal(clock_signal: ClockSignal, track: Track, samples_per_beat):
+        """Convert a track (pattern, note_value) to a trigger signal in sample-space with the correct length."""
         triggers = DrumMachine._track_to_triggers(track, samples_per_beat)
         # these have different lengths depending on the number of bars given. loop until end of frame.
         orig_trig = triggers[:]
@@ -281,17 +312,18 @@ class DrumMachine(Module):
         if samples_per_beat < 2:
             print("Warning: Cannot deal with samples_per_beat < 2")
             samples_per_beat = 2
-        #print("samples_per_beat", samples_per_beat)
-        # generate all trigger tracks.
-        trigger_tracks = [DrumMachine.extend_tracks(clock_signal, track, samples_per_beat) for track in self.tracks]
-        # now these trigger_tracks must be given envelopes. this is an operation with time-context, and should be
-        # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
+        # generate all trigger signals.
+        trigger_signal = [DrumMachine.make_trigger_signal(clock_signal, track, samples_per_beat) for track in self.tracks]
 
-        #for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_tracks):
+        # now these trigger_signals must be given envelopes. this is an operation with time-context, and should be
+        # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
+        # for now: the track's own TriggerModulator. TODO: discuss if this is where the TriggerModulator should live.
+
+        #for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_signal):
         #    self.collect(name) << tri
 
         signals = []
-        for track, trigger_track in zip(self.tracks, trigger_tracks):
+        for track, trigger_track in zip(self.tracks, trigger_signal):
             signal = track.trigger_modulator(clock_signal, trigger_track, track.envelope_gen)
 
             # modulate envelope with its carrier
@@ -301,24 +333,8 @@ class DrumMachine(Module):
             self.collect(track.name) << signal
 
             signals.append(signal)
-        sum_of_tracks = functools.reduce(np.add, signals)
-        #plt.plot(sum_of_tracks)
-        #plt.show()
+        sum_of_tracks = functools.reduce(np.add, signals)  # TODO: in the future, return many values instead of sum.
         return sum_of_tracks
-
-    @staticmethod
-    def _track_to_triggers(track: Track, samples_per_beat):
-        """Create a time signal of triggers. The length corresponds to the number of bars in the given track pattern"""
-        _, pattern, note_value, _, _, _ = track
-        samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16*4 = (1/4 * samples_per_beat) per note
-        indices = np.nonzero(pattern)[0] * samples_per_note
-        triggers = np.zeros(len(pattern) * samples_per_note)
-        #print("indices", indices)
-        triggers[indices] = 1
-        #plt.plot(triggers)
-        #plt.show()
-        return triggers
-
 
 
 class Drummin(Module):
@@ -338,18 +354,18 @@ class Drummin(Module):
                      )
         snare = Track(name="snare",
                       #pattern=[0, 0, 0, 0, 0, 0, 0, 0,    0, 0, 0, 0, 0, 0, 0, 0,    0, 1, 0, 1, 0, 0, 0, 0,  0, 1, 0, 1, 0, 1, 1, 1],
-                      pattern=[0, 0, 1, 0, 0, 1, 0, 1],
+                      pattern=[0, 0, 0, 0, 1, 0, 0, 0],
                       note_values=1 / 16,
                       #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
-                      envelope_gen=ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
+                      envelope_gen=(ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
                                                   decay_curvature=P(3)) |
                                    ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5), decay_length=P(500),
-                                                  decay_curvature=P(1000)),
+                                                  decay_curvature=P(1000))) >> 1,
                       carrier=TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6,
                       trigger_modulator=TriggerModulator(),
                       )
         hihat = Track(name="hihat",
-                      pattern=[0, 1, 0, 1, 0, 1, 0, 1],
+                      pattern=[0, 1, 0, 1, 0, 1, 0],
                       note_values=1 / 8,
                       #envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
                       envelope_gen=ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
@@ -369,7 +385,7 @@ class Drummin(Module):
 
         #self.synthie = StepSequencing()
 
-        self.out = self.output #+ self.synthie
+        self.out = self.output  #+ self.synthie
 
 
 if __name__ == "__main__":
