@@ -1,15 +1,11 @@
 """ModernGL based live graph implementation."""
 import collections
-import queue
-import threading
 import typing
 from typing import Tuple
 
 import moderngl
 import moderngl_window as mglw
 import numpy as np
-
-
 
 
 class KeyAndMouseEvent(typing.NamedTuple):
@@ -20,10 +16,6 @@ class KeyAndMouseEvent(typing.NamedTuple):
     # TODO: support more modifiers.
     # Whether SHIFT is pressed.
     shift_is_on: bool
-
-
-class SwitchMonitorEvent:
-    pass
 
 
 class SignalWindow(mglw.WindowConfig):
@@ -64,10 +56,6 @@ class SignalWindow(mglw.WindowConfig):
         self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k for k in keys_as_ascii}
 
     def key_event(self, key, action, modifiers):
-        if key == ord('m') and action == self.wnd.keys.ACTION_RELEASE:
-            print("m")
-            self._event_queue.append(SwitchMonitorEvent())
-
         if key not in self._interesting_keys:
             return
         # Key presses

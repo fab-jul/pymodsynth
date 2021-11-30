@@ -4,6 +4,14 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
+## First usage
+
+_TODO_: We should clean up the project structure.
+
+```sh
+export PYTHONPATH=$(pwd)
+python playground/gimme_sound.py --output_gen_class=BabiesFirstSynthie
+```
 
 ## Contribute
 
@@ -34,11 +42,6 @@ git push origin -d "$BRANCH"  # Delete remotely
   - [ ] Visual feedback in the GUI / explore keyboard and mouse again.
 
 
-## WIP
-
-```sh
-python gimme_sound.py -d -1 --output_gen_class=FooBar
-```
 
 ---
 
