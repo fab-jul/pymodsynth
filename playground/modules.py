@@ -1,4 +1,5 @@
 import collections
+import functools
 import operator
 import random
 import pprint
@@ -618,6 +619,46 @@ class SimpleLowPass(Module):
         return output
 
 
+class ButterworthFilter(Module):
+    """Simplest lowpass: average over previous <window> values"""
+    def __init__(self, inp: Module, f_low: Module, f_high: Module, mode: str = "hp", order: int = 10):
+        super().__init__()
+        self.last_signal = State()
+        self.inp = inp
+        self.f_low = f_low
+        self.f_high = f_high
+        self.mode = mode
+        self.order = order
+
+    def out(self, clock_signal: ClockSignal):
+        if not self.last_signal.is_set:
+            self.last_signal.set(clock_signal.zeros())
+        num_samples, num_channels = clock_signal.ts.shape
+        inp = self.collect("inp") <<  self.inp(clock_signal)
+        f_low = self.f_low(clock_signal)[0, 0]
+        f_high = self.f_high(clock_signal)[0, 0] + f_low
+
+        f_low = np.clip(f_low, 1e-10, SAMPLING_FREQUENCY/2)
+        f_high = np.clip(f_high, 1e-10, SAMPLING_FREQUENCY/2)
+
+        full_signal = np.concatenate((self.last_signal.get(), inp), axis=0)
+        self.last_signal.set(inp)
+        self.last_signal.set(inp)
+
+        fs = {"lp": f_low, "hp": f_high, "bp": (f_low, f_high)}[self.mode]
+        sos = get_me_some_butter(self.order, fs, self.mode)
+        filtered_signal = self.collect("filtered") << signal.sosfilt(sos, full_signal[:,0])[-num_samples:, np.newaxis]
+
+        #print(max(filtered_signal[-num_samples:, :]))
+        return filtered_signal[-num_samples:, :]
+
+
+@functools.lru_cache(maxsize=128)
+def get_me_some_butter(order, fs, mode):
+    print("MAKING BUTTER")
+    return signal.butter(order, fs, mode, fs=SAMPLING_FREQUENCY, output='sos')
+
+
 class ShapeModulator(Module):
     """
     Modulate a given shape onto clicks in time domain. Nearby clicks will both get the shape, so they may overlap.
@@ -1068,6 +1109,49 @@ class FooBar(Module):
                     + self.mixer * self.bass)
 
 
+P = Parameter
+from scipy import signal
+
+
+class Buttering(Module):
+    def __init__(self):
+        super().__init__()
+
+        self.base_freq = Parameter(220, lo=220/4, hi=440, key="q")
+        self.base_freq2 = Parameter(220/4, lo=220/16, hi=440, key="w")
+        self.bpm = Parameter(100, lo=10, hi=300, key="e", clip=True)
+        bpm_melody = self.bpm * 2
+        self.e =Parameter(2000, key="x")
+        self.melody_highs = StepSequencer(
+            SawSource,
+            self.base_freq,
+            bpm_melody,
+            melody=[1, 0, 12, 11, 8, 1],
+            #melody=[1, 2, 3, 4],
+            steps=[1],
+            gate='SSSH',
+            envelope=EnvelopeGenerator(self.e),
+            melody_randomizer=Parameter(0, knob="z")
+        )
+        self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
+                                                  wave_generator_cls=SawSource,)
+
+        self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
+        self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
+        self.melody = (self.mixer_c1 * self.melody_highs +
+                       self.mixer_c2 * self.melody_lows)
+
+        self.step_bass = StepSequencer(
+            wave_generator_cls=SineSource,
+            base_frequency=self.base_freq2,
+            bpm=self.bpm,
+            melody=[1, 5, 3, 5],
+            steps=[1],
+            gate="SSSH")
+
+        self.filtered = ButterworthFilter(inp=self.melody+self.step_bass*2, f_low=P(0.01, key="g"), f_high=P(10000, key="h"), mode="bp")
+        self.out = self.filtered
+
 
 
 
@@ -1118,7 +1202,7 @@ class StepSequencing(Module):
 #            gate="SHSH")
 
 
-        self.out = self.lp_melody# + self.step_bass  # + self.step_highs
+        self.out = self.lp_melody  # + self.step_bass  # + self.step_highs
 
 
 class TestModule(Module):
@@ -1227,5 +1311,5 @@ def plot_module(synthie_cls, plot=("(melody1|bass).*",), num_steps=4):
 
 
 if __name__ == '__main__':
-    plot_module()
+    plot_module(Buttering, plot=[".*"])
 

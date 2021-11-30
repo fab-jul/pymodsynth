@@ -98,8 +98,6 @@ def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
 
-# plt.plot(func_gen(lambda t: t, 20, 1, 1, 1))
-# plt.show()
 
 
 class FuncEnvelopeGen(EnvelopeGen):
@@ -180,6 +178,20 @@ class ADSREnvelopeGen(EnvelopeGen):
             envelope = np.concatenate((attack, decay, hold, release), 0)
             res.append(envelope)
         return res
+
+
+class EnvelopeMakerModule:
+
+    pass
+
+
+class Foo:
+
+    def out(self, clock_signal):
+        triggers = ...
+        envelopes = self.envelope_module(len(triggers))
+
+
 
 #######################################################################################################
 # DrumModule Infra
