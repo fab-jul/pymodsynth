@@ -1,6 +1,6 @@
 import operator
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping, Optional, NamedTuple
+from typing import Mapping, Union, MutableMapping, Optional, NamedTuple, Type, TypeVar, Set
 
 import numpy as np
 from playground import midi_lib
@@ -50,11 +50,16 @@ class Clock:
         self.arange = np.arange(self.num_samples, dtype=int)  # Cache it.
 
     def __call__(self) -> ClockSignal:
+        """Gets clock signal and increments i."""
+        clock_signal = self.get_current_clock_signal()
+        self.i += self.num_samples
+        return clock_signal
+
+    def get_current_clock_signal(self):
         sample_indices = self.i + self.arange
         ts = sample_indices / self.sample_rate
         # Broadcast `ts` into (num_samples, num_channels)
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        self.i += self.num_samples
         return ClockSignal(ts, sample_indices, self.sample_rate)
 
 
@@ -74,15 +79,19 @@ class State:
         self._value = value
 
 
+T = TypeVar("T")
+
+
 class Module:
     """
     Module :: Signal -> Signal, in particular:
     Module :: [Sampling_Times] -> [Samples]
-    Modules can be called on a nparray of sampling times, and calculate an output of the same size according to
+
+    Modules can be called on a nparray of sampling times,
+    and calculate an output of the same size according to
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
-    measure_time = False
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
@@ -120,28 +129,31 @@ class Module:
     def __call__(self, clock_signal: ClockSignal) -> np.ndarray:
         return self.out(clock_signal)
 
-    def find_params(self) -> MutableMapping[str, "Parameter"]:
-        return self._find(Parameter)
+    def get_params_by_name(self) -> MutableMapping[str, "Parameter"]:
+        return self._get(Parameter)
 
-    def find_state(self) -> MutableMapping[str, "State"]:
-        return self._find(State)
+    def get_states_by_name(self) -> MutableMapping[str, "State"]:
+        return self._get(State)
 
-    def _find(self, cls, prefix=""):
+    def _get(self, cls: Type[T], prefix="") -> MutableMapping[str, T]:
+        """Recursively find all instances of `cls`."""
         result = {}
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
-                var_instance.name = f"{prefix}{var_name}"
-                result[var_name] = var_instance
+                full_name = f"{prefix}{var_name}"
+                var_instance.name = full_name
+                result[full_name] = var_instance
                 continue
+            # If it's a Module, we go into the recursion.
             if isinstance(var_instance, Module):
-                result.update(var_instance._find(cls, prefix=f"{var_name}."))
+                result.update(var_instance._get(cls, prefix=f"{var_name}."))
         return result
 
     # NOTE: We need to take the params and state, as we cannot
     # find it anymore, since we have new classes when we call this!
     def copy_params_and_state_from(self, src_params, src_state):
-        _copy(src=src_params, target=self.find_params())
-        _copy(src=src_state, target=self.find_state())
+        _copy(src=src_params, target=self.get_params_by_name())
+        _copy(src=src_state, target=self.get_states_by_name())
 
 
 class _MathModule(Module):
@@ -274,8 +286,8 @@ class Random(Module):
 class SineSource(Module):
     def __init__(self,
                  frequency: Module = Constant(440.),
-                 amplitude=Parameter(1.0),
-                 phase=Parameter(0.0)):
+                 amplitude=Constant(1.0),
+                 phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -295,7 +307,7 @@ class SineSource(Module):
 
 @tests_helper.mark_for_testing()
 class SawSource(Module):
-    def __init__(self, frequency: Module = Constant(440.), amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -313,7 +325,7 @@ class SawSource(Module):
 
 @tests_helper.mark_for_testing()
 class TriangleSource(Module):
-    def __init__(self, frequency: Module = Constant(440.), amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
@@ -330,7 +342,7 @@ class TriangleSource(Module):
 
 @tests_helper.mark_for_testing(inp=SineSource, carrier_frequency=SineSource)
 class SineModulator(Module):
-    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
+    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Constant(1.0)):
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
@@ -517,9 +529,8 @@ def lift(a):
 class ClickModulation(Module):
     def __init__(self):
         self.wild_triangles = sum(TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3))
-        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
+        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Constant(100)))
         # test_module(self.out, num_frames=10)
-
 
 @tests_helper.mark_for_testing()
 class BabiesFirstSynthie(Module):
