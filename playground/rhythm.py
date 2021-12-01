@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 P = Parameter
 
+
 class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keying work!
     def __mul__(self, other):
         return _MathEnvGen(operator.mul, self, other)
@@ -97,7 +98,6 @@ def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     xs = func(np.linspace(0, curvature, num_samples))
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
-
 
 
 class FuncEnvelopeGen(EnvelopeGen):
@@ -192,7 +192,6 @@ class Foo:
         envelopes = self.envelope_module(len(triggers))
 
 
-
 #######################################################################################################
 # DrumModule Infra
 
@@ -255,6 +254,39 @@ class Track(NamedTuple):
     carrier: Module
     trigger_modulator: TriggerModulator
 
+
+class Pattern(NamedTuple):
+    name: str
+    pattern: List[int]
+    note_values: float
+
+
+class TriggerSource(Module):
+    """Take patterns and bpm and acts as a source of trigger tracks (one for each input pattern)."""
+    def __init__(self, bpm: Module, patterns: List[Pattern]):
+        self.bpm = bpm
+        self.patterns = {name: (pattern, note_values) for name, pattern, note_values in patterns}
+
+    @staticmethod
+    def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
+        """note value is the time distance between two triggers"""
+        samples_per_note = round(samples_per_beat * note_value * 4)
+        spaced_trigger_indices = np.nonzero(pattern) samples_per_note
+        # what pattern-repetition are we at? where (offset) inside the frame is the current pattern-repetition?
+        rep_num = int(clock_signal.sample_indices[0] / (len(pattern) * samples_per_note))
+        rep_offset = clock_signal.sample_indices[0] % (len(pattern) * samples_per_note)
+        
+
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        bpm = np.mean(self.bpm(clock_signal))
+        samples_per_beat = SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
+        if samples_per_beat < 2:
+            print("Warning: Cannot deal with samples_per_beat < 2")
+            samples_per_beat = 2
+        trigger_indices_dict = {name: TriggerSource.pattern_to_triggers(clock_signal, samples_per_beat, pattern, note_val) for
+                                name, (pattern, note_vals) in self.patterns.items()}
+        return trigger_indices_dict
 
 class DrumMachine(Module):
     """
