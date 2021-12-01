@@ -10,14 +10,11 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
-import midi_lib
 import dataclasses
 import importlib
 import os.path
 import traceback
 
-import params_lib
-import filewatcher
 import sys
 import time
 import typing
@@ -25,8 +22,10 @@ import typing
 import numpy as np
 import sounddevice as sd
 
-import live_graph_modern_gl
-import modules
+from playground import filewatcher
+from playground import midi_lib
+from playground import window_lib
+from playground import modules
 
 
 # Can contain:
@@ -69,16 +68,15 @@ def _get_modules_path():
     return os.path.join(current_dir, "modules.py")
 
 
-class MakeSignal:
+class SynthesizerController:
 
-    def __init__(self, output_gen_class: str, sample_rate, num_channels,
-                 signal_window: live_graph_modern_gl.SignalWindow):
+    def __init__(self, output_gen_class: str, sample_rate, num_samples, num_channels,
+                 signal_window: window_lib.SignalWindow):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
-        self.i = 0
+        self.clock = modules.Clock(num_samples, num_channels, sample_rate)
         self.last_t = time.time()
-        self.t0 = -1
         self.signal_window = signal_window
 
         # Set defaults.
@@ -87,15 +85,13 @@ class MakeSignal:
         self.key_mapping: typing.Dict[str, modules.Parameter] = {}
         self.knob_mapping: typing.Dict[midi_lib.Knob, modules.Parameter] = {}
 
-        # TODO: make a flag!
-        # TODO: Support reloading
         try:
+            # TODO: make a flag!
+            # TODO: Support reloading
             self.known_knobs = midi_lib.KnownKnobs.from_file("traktor_kontrol_knobs.txt")
         except FileNotFoundError as e:
             print(f"ERROR: {e}")
             self.known_knobs = midi_lib.KnownKnobs({})
-
-        self.monitor = modules.Monitor()
 
         self.output_gen_class = output_gen_class
         self.output_gen = self._make_output_gen()
@@ -118,8 +114,8 @@ class MakeSignal:
 
         self._set_output_gen(self.output_gen)
 
-    def _make_output_gen(self) -> modules.Module:
-        avaiable_vars = vars(modules)
+    def _make_output_gen(self, modules_module=modules) -> modules.Module:
+        avaiable_vars = vars(modules_module)
         if self.output_gen_class not in avaiable_vars:
             raise ValueError(f"Invalid class: {self.output_gen_class}")
         print(f"Creating {self.output_gen_class}...")
@@ -131,14 +127,30 @@ class MakeSignal:
 
         self.modules_watcher.did_read_file_just_now()
 
-        print("Reading modules.py ...")
-        importlib.reload(modules)
+        print("Trying to reload modules.py ...")
+        # noinspection PyBroadException
         try:
-            new_instance = self._make_output_gen()
+            modules_new = importlib.import_module("modules", "playground")
+            importlib.reload(modules_new)
+            new_instance = self._make_output_gen(modules_module=modules_new)
         except:
             traceback.print_exc()
-            print(f"Blanked catch, not reloading...")
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
             return
+
+        # Try passing through one clock signal to catch errors in `out`.
+        clock_signal = self.clock.get_current_clock_signal()
+
+        # noinspection PyBroadException
+        try:
+            new_instance(clock_signal)
+        except:
+            traceback.print_exc()
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
+            return
+
+        # All good, can use new code.
+        importlib.reload(modules)
 
         # Copy old state and params.
         new_instance.copy_params_and_state_from(
@@ -146,37 +158,42 @@ class MakeSignal:
             src_state=self.state)
 
         self._set_output_gen(new_instance)
+        print("Reloaded modules!")
 
     def _set_output_gen(self, output_gen: modules.Module):
         """Called on init and when modules.py changes."""
-        self.output_gen.detach_monitor()
         self.output_gen = output_gen
-        self.params = self.output_gen.find_params()
-        self.state = self.output_gen.find_state()
-        self.output_gen.attach_monitor(self.monitor)
+        self.params = self.output_gen.get_params_by_name()
+        self.state = self.output_gen.get_states_by_name()
         self._update_key_mapping()
         self._update_knob_mapping()
 
     def _update_key_mapping(self):
-        self.key_mapping = {param.key: param
-                            for _, param in self.params.items()
-                            if param.key}
-
+        self.key_mapping = {}
+        for param in set(self.params.values()):
+            if not param.key:
+                continue
+            if param.key in self.key_mapping:
+                print(f"*** Duplicate key, `{param.key}` already used! Ignoring...", file=sys.stderr)
+                continue
+            self.key_mapping[param.key] = param
         print("Did update keymapping, keys=", self.key_mapping.keys())
         self.signal_window.set_interesting_keys(self.key_mapping.keys())
 
     def _update_knob_mapping(self):
         if not self.midi_controller:
             return
-
-        self.knob_mapping = {self.known_knobs.get(param.knob): param
-                             for _, param in self.params.items()
-                             if param.knob}
-
+        self.knob_mapping = {}
         self.midi_controller.reset_interesting_knobs()
-        for knob in self.knob_mapping:
+        for param in set(self.params.values()):
+            if not param.knob:
+                continue
+            if param.knob in self.knob_mapping:
+                print(f"*** Duplicate knob, `{param.knob}` already used! Ignoring...", file=sys.stderr)
+                continue
+            knob = self.known_knobs.get(param.knob)
+            self.knob_mapping[knob] = param
             self.midi_controller.register_interesting_knob(knob)
-
         print("Did update interesting knobs to", self.midi_controller.interesting_knobs)
 
     def _process_midi_controller_events(self):
@@ -211,50 +228,31 @@ class MakeSignal:
         self.last_t = t
         if status:
             print(status, file=sys.stderr)
-        ts = (self.i + np.arange(num_samples)) / self.sample_rate
-        # Broadcast `ts` into (num_samples, num_channels)
-        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        assert ts.shape == (num_samples, self.num_channels)
-        outdata[:] = self.output_gen(ts)
+        clock_signal = self.clock()
+        outdata[:] = self.output_gen(clock_signal)
 
-        if EVENT_QUEUE:
-            s = time.time()
-            # Ingest all events.
-            while EVENT_QUEUE:
-                event = EVENT_QUEUE.popleft()  # We are a queue, pop from the left, append to the right.
-                if isinstance(event, live_graph_modern_gl.KeyAndMouseEvent):
-                    # Unpacking is supposedly faster than name access.
-                    dx, dy, keys, shift_is_on = event
-                    # The first key needs left/right movement ("x"),
-                    # the second up/down ("y"). NOTE: we only support 2 keys.
-                    for offset, k in zip((dx, dy), keys):
-                        param: modules.Parameter = self.key_mapping[k]
-                        multiplier = param.shift_multiplier if shift_is_on else 1
-                        param.inc(offset * multiplier)
+        # Ingest all events.
+        while EVENT_QUEUE:
+            event = EVENT_QUEUE.popleft()  # We are a queue, pop from the left, append to the right.
+            if isinstance(event, window_lib.KeyAndMouseEvent):
+                # Unpacking is supposedly faster than name access.
+                dx, dy, keys, shift_is_on = event
+                # The first key needs left/right movement ("x"),
+                # the second up/down ("y"). NOTE: we only support 2 keys.
+                for offset, k in zip((dx, dy), keys):
+                    param: modules.Parameter = self.key_mapping[k]
+                    multiplier = param.shift_multiplier if shift_is_on else 1
+                    param.inc(offset * multiplier)
 
-                elif isinstance(event, midi_lib.KnobEvent):
-                    knob, rel_value = event
-                    param: modules.Parameter = self.knob_mapping[knob]
-                    param.set_relative(rel_value)
+            elif isinstance(event, midi_lib.KnobEvent):
+                knob, rel_value = event
+                param: modules.Parameter = self.knob_mapping[knob]
+                param.set_relative(rel_value)
 
-                # TODO: Clean up
-                elif isinstance(event, live_graph_modern_gl.SwitchMonitorEvent):
-                    print("Attaching to sin")
-                    #event2 = live_graph_modern_gl.SwitchMonitorEvent = EVENT_QUEUE.pop()
-                    self.output_gen.detach_monitor()
-                    self.output_gen.sin0.frequency.attach_monitor(self.monitor)
+            else:
+                raise TypeError(event)
 
-                else:
-                    raise TypeError(event)
-
-#            duration = time.time() - s
-#            if duration > 1e-4:
-#                print("WARN: slow event ingestion!")
-        self.signal_window.set_signal(self.monitor.get_data())
-        # if random.random() > 0.99:
-        #     self.output_gen.detach_monitor()
-        #     self.output_gen.sin0.attach_monitor(self.monitor)
-        self.i += num_samples
+        self.signal_window.set_signal(outdata)
 
 
 def start_sound(output_gen_class: str, device: int):
@@ -266,23 +264,27 @@ def start_sound(output_gen_class: str, device: int):
     num_samples = 2048
     num_channels = 1
 
-    # We first make a window, so that we always have that.
-    window, timer, signal_window = live_graph_modern_gl.prepare_window(
+    window, timer, signal_window = window_lib.prepare_window(
         EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
 
-    # Now we make the signal maker.
-    sin = MakeSignal(output_gen_class=output_gen_class,
-                     sample_rate=sample_rate,
-                     num_channels=num_channels,
-                     signal_window=signal_window)
+    syntheziser_controller = SynthesizerController(
+        output_gen_class=output_gen_class,
+        sample_rate=sample_rate,
+        num_channels=num_channels,
+        num_samples=num_samples,
+        signal_window=signal_window)
 
     # Start audio stream.
     with sd.OutputStream(
-            device=device, blocksize=num_samples,
+            device=device,
+            blocksize=num_samples,
             latency="low",
-            channels=num_channels, callback=sin.callback, samplerate=sample_rate):
-        # Start window event loop.
-        live_graph_modern_gl.run_window_loop(window, timer)
+            channels=num_channels,
+            callback=syntheziser_controller.callback,
+            samplerate=sample_rate):
+        # Start window event loop. The audio stream will live
+        # as long as the window is open.
+        window_lib.run_window_loop(window, timer)
 
 
 def main():
@@ -294,16 +296,16 @@ def main():
     if args.list_devices:
         print(sd.query_devices())
         sys.exit(0)
-
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[parser])
     parser.add_argument(
-        '-d', '--device', type=int, default=3,  # TODO: Go back to None
-        help='output device (numeric ID or substring)')
+        "--output_gen_class", required=True,
+        help="A `Module` subclass in modules.py.")
     parser.add_argument(
-        "--output_gen_class", default="ClickModulation")
+        '-d', '--device', type=int, default=-1,
+        help='output device (numeric ID or substring)')
     args = parser.parse_args(remaining)
 
     start_sound(args.output_gen_class, args.device)

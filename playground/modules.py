@@ -1,8 +1,10 @@
+import operator
 from functools import reduce, lru_cache
-from typing import Mapping, Union, MutableMapping, Optional
+from typing import Mapping, Union, MutableMapping, Optional, NamedTuple, Type, TypeVar, Set
 
 import numpy as np
-import midi_lib
+from playground import midi_lib
+from playground.tests import helper as tests_helper
 import time
 import random
 
@@ -11,6 +13,54 @@ import scipy.signal
 
 # some modules need access to sampling_frequency
 SAMPLING_FREQUENCY = 44100
+
+
+OUT_DTYPE = np.float32  # TODO
+
+
+class ClockSignal(NamedTuple):
+    ts: np.ndarray
+    sample_indices: np.ndarray
+    sample_rate: int
+
+    def zeros(self):
+        return np.zeros_like(self.ts)
+
+    @property
+    def shape(self):
+        return self.ts.shape
+
+    @property
+    def num_samples(self):
+        return self.ts.shape[0]
+
+    def add_channel_dim(self, signal):
+        assert len(signal.shape) == 1
+        return np.broadcast_to(signal.reshape(-1, 1), self.shape)
+
+
+class Clock:
+
+    def __init__(self, num_samples=2048, num_channels=2, sample_rate=44100.):
+        self.num_samples = num_samples
+        self.num_channels = num_channels
+        self.sample_rate = sample_rate
+        self.i = 0
+
+        self.arange = np.arange(self.num_samples, dtype=int)  # Cache it.
+
+    def __call__(self) -> ClockSignal:
+        """Gets clock signal and increments i."""
+        clock_signal = self.get_current_clock_signal()
+        self.i += self.num_samples
+        return clock_signal
+
+    def get_current_clock_signal(self):
+        sample_indices = self.i + self.arange
+        ts = sample_indices / self.sample_rate
+        # Broadcast `ts` into (num_samples, num_channels)
+        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
+        return ClockSignal(ts, sample_indices, self.sample_rate)
 
 
 class State:
@@ -29,84 +79,110 @@ class State:
         self._value = value
 
 
-
-
-class Monitor:
-    def __init__(self):
-        self.data = np.zeros((1,1))
-        self.mod_name = "No name"
-
-    def write(self, data_in, mod_name):
-        self.data = data_in
-        self.mod_name = mod_name
-
-    def get_data(self):
-        return self.data
+T = TypeVar("T")
 
 
 class Module:
     """
     Module :: Signal -> Signal, in particular:
     Module :: [Sampling_Times] -> [Samples]
-    Modules can be called on a nparray of sampling times, and calculate an output of the same size according to
+
+    Modules can be called on a nparray of sampling times,
+    and calculate an output of the same size according to
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
-    measure_time = False
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
 
+    def __mul__(self, other):
+        """Implement module * scalar and module * module."""
+        return _MathModule(operator.mul, self, other)
 
-    def __call__(self, ts: np.ndarray) -> np.ndarray:
-        if Module.measure_time:
-            t0 = time.time()
+    def __rmul__(self, other):
+        """Implement scalar * module."""
+        return self * other
 
-        out = self.out(ts)
+    def __truediv__(self, other):
+        """Implement module / scalar and module / module"""
+        return _MathModule(operator.truediv, self, other)
 
-        if Module.measure_time:
-            t1 = time.time()
-            print("Time to call out(ts) for Module", self.__repr__(), ":", t1 - t0)
+    def __rtruediv__(self, other):
+        return _MathModule(operator.truediv, other, self)
 
-        if hasattr(self, "monitor") and self.monitor is not None:
-            self.monitor.write(out, self.__repr__())
-        return out
+    def __add__(self, other):
+        """Implement module + scalar and module + module"""
+        return _MathModule(operator.add, self, other)
 
-    def attach_monitor(self, monitor: Monitor):
-        self.monitor = monitor
+    def __radd__(self, other):
+        return self + other
 
-    def detach_monitor(self):
-        self.monitor = None
+    def __sub__(self, other):
+        """Implement module - scalar and module - module"""
+        return _MathModule(operator.sub, self, other)
 
-    def find_params(self) -> MutableMapping[str, "Parameter"]:
-        return self._find(Parameter)
+    def __rsub__(self, other):
+        return _MathModule(operator.sub, other, self)
 
-    def find_state(self) -> MutableMapping[str, "State"]:
-        return self._find(State)
+    # TODO: Describe why we have call and out (in short: for convenicence)
+    def __call__(self, clock_signal: ClockSignal) -> np.ndarray:
+        return self.out(clock_signal)
 
-    def _find(self, cls, prefix=""):
+    def get_params_by_name(self) -> MutableMapping[str, "Parameter"]:
+        return self._get(Parameter)
+
+    def get_states_by_name(self) -> MutableMapping[str, "State"]:
+        return self._get(State)
+
+    def _get(self, cls: Type[T], prefix="") -> MutableMapping[str, T]:
+        """Recursively find all instances of `cls`."""
         result = {}
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
-                var_instance.name = f"{prefix}{var_name}"
-                result[var_name] = var_instance
+                full_name = f"{prefix}{var_name}"
+                var_instance.name = full_name
+                result[full_name] = var_instance
                 continue
+            # If it's a Module, we go into the recursion.
             if isinstance(var_instance, Module):
-                result.update(var_instance._find(cls, prefix=f"{var_name}."))
+                result.update(var_instance._get(cls, prefix=f"{var_name}."))
         return result
 
     # NOTE: We need to take the params and state, as we cannot
     # find it anymore, since we have new classes when we call this!
     def copy_params_and_state_from(self, src_params, src_state):
-        _copy(src=src_params, target=self.find_params())
-        _copy(src=src_state, target=self.find_state())
+        _copy(src=src_params, target=self.get_params_by_name())
+        _copy(src=src_state, target=self.get_states_by_name())
 
 
+class _MathModule(Module):
+    """Implement various mathematical operations on modules, see base class."""
+
+    def __init__(self, op, left, right):
+        super().__init__()
+        self.op = op
+        self.left = left
+        self.right = right
+
+    def out(self, clock_signal: ClockSignal):
+        left = self._maybe_call(self.left, clock_signal)
+        right = self._maybe_call(self.right, clock_signal)
+        return self.op(left, right)
+
+    @staticmethod
+    def _maybe_call(module_or_number, clock_signal: ClockSignal):
+        if isinstance(module_or_number, Module):
+            return module_or_number(clock_signal)
+        return module_or_number
+
+
+@tests_helper.mark_for_testing(value=lambda: 1)
 class Constant(Module):
     def __init__(self, value):
         self.value = value
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         # TODO: sounds cool
         # num_samples, num_channels = ts.shape
         # if abs(self.previous_value - self.value) > 1e-4:
@@ -115,7 +191,7 @@ class Constant(Module):
         #     print(self.previous_value, self.value, out[:10])
         # else:
         #     out = np.ones_like(ts) * self.value
-        out = np.broadcast_to(self.value, ts.shape)
+        out = np.broadcast_to(self.value, clock_signal.shape)
         return out
 
     def __repr__(self):
@@ -132,6 +208,7 @@ class Constant(Module):
         return self.value
 
 
+@tests_helper.mark_for_testing(value=lambda: 1)
 class Parameter(Constant):
 
     def __init__(self,
@@ -159,9 +236,9 @@ class Parameter(Constant):
             clip: If True, clip to [lo, hi] in `set`.
         """
         super().__init__(value)
-        if not lo:
+        if lo is None:
             lo = 0.1 * value
-        if not hi:
+        if hi is None:
             hi = 1.9 * value
         if hi < lo:
             raise ValueError
@@ -183,16 +260,17 @@ class Parameter(Constant):
         self.set(self.lo + self.span * rel_value)
 
 
+@tests_helper.mark_for_testing()
 class Random(Module):
     """Output a constant random amplitude until a random change event changes the amplitude. Best explanation ever."""
-    def __init__(self, max_amplitude, change_chance):
+    def __init__(self, max_amplitude: float = 1.0, change_chance: float = 0.5):
         self.max_amplitude = max_amplitude
         self.p = change_chance
         self.amp = random.random() * self.max_amplitude
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         # random experiment
-        frame_length, num_channels = ts.shape
+        frame_length, num_channels = clock_signal.shape
         res = np.empty((0, num_channels))
         while len(res) < frame_length:
             chance_in_frame = 1 - pow(1 - self.p, frame_length - len(res))
@@ -204,59 +282,73 @@ class Random(Module):
         return res
 
 
+@tests_helper.mark_for_testing()
 class SineSource(Module):
-    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self,
+                 frequency: Module = Constant(440.),
+                 amplitude=Constant(1.0),
+                 phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
-        self.prev = None
+        self.last_cumsum_value = State(initial_value=0)
 
-    def out(self, ts):
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
-        out = amp * np.sin((2 * np.pi * freq * ts) + phase)
+    def out(self, clock_signal: ClockSignal):
+        dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
+        cumsum = np.cumsum(freq * dt, axis=0) + self.last_cumsum_value.get()
+        # Cache last cumsum for next step.
+        self.last_cumsum_value.set(cumsum[-1, :])
+        out = amp * np.sin((2 * np.pi * cumsum) + phase)
         return out
 
 
+@tests_helper.mark_for_testing()
 class SawSource(Module):
-    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
 
-    def out(self, ts):
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
+    def out(self, clock_signal: ClockSignal):
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
         period = 1 / freq
+        # TODO: Use cumsum
+        ts = clock_signal.ts
         out = 2 * (ts/period + phase - np.floor(1/2 + ts/period + phase)) * amp
         return out
 
 
+@tests_helper.mark_for_testing()
 class TriangleSource(Module):
-    def __init__(self, frequency: Module, amplitude=Parameter(1.0), phase=Parameter(0.0)):
+    def __init__(self, frequency: Module = Constant(440.), amplitude=Constant(1.0), phase=Constant(0.0)):
         self.frequency = frequency
         self.amplitude = amplitude
         self.phase = phase
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-        amp = self.amplitude(ts)
-        freq = self.frequency(ts)
-        phase = self.phase(ts)
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        amp = self.amplitude(clock_signal)
+        freq = self.frequency(clock_signal)
+        phase = self.phase(clock_signal)
         period = 1 / freq
+        ts = clock_signal.ts
         out = (2 * np.abs(2 * (ts/period + phase - np.floor(1/2 + ts/period + phase))) - 1) * amp
         return out
 
 
+@tests_helper.mark_for_testing(inp=SineSource, carrier_frequency=SineSource)
 class SineModulator(Module):
-    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Parameter(1.0)):
+    def __init__(self, inp: Module, carrier_frequency: Module, inner_amplitude=Constant(1.0)):
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
         # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
 
-    def out(self, ts):
-        out = self.carrier(ts) * self.inp(ts)
+    def out(self, clock_signal: ClockSignal):
+        out = self.carrier(clock_signal) * self.inp(clock_signal)
         return out
 
 
@@ -272,10 +364,10 @@ class KernelGenerator(Module):
         self.func = func  # function from t to [-1, 1]
         self.length = length  # kernel length, a module
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         norm = lambda v: v / np.linalg.norm(v)
         # we dont need the inp
-        lengths = self.length(ts)  # shape (512, 1)
+        lengths = self.length(clock_signal)  # shape (512, 1)
         max_len = int(np.max(lengths))
         frame_length, num_channels = lengths.shape
         out = np.array([norm([self.func(i) if i < int(l) else 0 for i in range(max_len)]) for l in lengths])
@@ -292,43 +384,43 @@ class KernelConvolver(Module):
         self.kernel_generator = kernel_generator
         self.last_signal = None
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         if self.last_signal is None:
-            self.last_signal = np.zeros_like(ts)
-        num_samples, num_channels = ts.shape
-        inp = self.inp(ts)
+            self.last_signal = clock_signal.zeros()
+        num_samples, num_channels = clock_signal.shape
+        inp = self.inp(clock_signal)
         full_signal = np.concatenate((self.last_signal, inp), axis=0)
         self.last_signal = inp
-        kernels = self.kernel_generator(ts)
+        kernels = self.kernel_generator(clock_signal)
         # shape must be (frame_length, max_kernel_size, num_channels)
         frame_length, max_kernel_size, num_channels = kernels.shape
         slices = np.concatenate([full_signal[i:i+max_kernel_size, :] for i in range(frame_length - max_kernel_size + 1, frame_length * 2 - max_kernel_size + 1)])
         slices = slices.reshape(kernels.shape)
         res_block = np.tensordot(slices, kernels, axes=[[1, 2], [1, 2]])
-        res = np.diag(res_block).reshape(ts.shape)
+        res = np.diag(res_block).reshape(clock_signal.shape)
         return res
 
 
-
+@tests_helper.mark_for_testing(inp=SineSource)
 class SimpleLowPass(Module):
     """Simplest lowpass: average over previous <window> values"""
-    def __init__(self, inp: Module, window_size: Module):
+    def __init__(self, inp: Module, window_size: Module = Constant(3.)):
         self.window_size = window_size
         self.last_signal = State()
         self.inp = inp
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         if not self.last_signal.is_set:
-            self.last_signal.set(np.zeros_like(ts))
-        num_samples, num_channels = ts.shape
-        input = self.inp(ts)
+            self.last_signal.set(clock_signal.zeros())
+        num_samples, num_channels = clock_signal.shape
+        input = self.inp(clock_signal)
         # Shape: (2*num_frames, num_channels)
         full_signal = np.concatenate((self.last_signal.get(), input), axis=0)
-        window_sizes = self.window_size(ts)
+        window_sizes = self.window_size(clock_signal)
         # TODO: Now we have one window size per frame. Seems reasonable?
         # Maybe we want to have a "MapsToSingleValueModule".
         window_size: int = max(1, round(float(np.mean(window_sizes))))
-        mean_filter = np.ones((window_size,), dtype=ts.dtype) / window_size
+        mean_filter = np.ones((window_size,), dtype=OUT_DTYPE) / window_size
         result_per_channel = []
         start_time_index = num_samples - window_size + 1
         # Note that this for loop si over at most 2 elements!
@@ -339,10 +431,12 @@ class SimpleLowPass(Module):
                                       mean_filter, "valid"))
         self.last_signal.set(input)
         output = np.stack(result_per_channel, axis=-1)  # Back to correct shape
-        assert output.shape == ts.shape, (output.shape, ts.shape, window_size, start_time_index)
+        assert output.shape == clock_signal.shape, (output.shape, clock_signal.shape, window_size, start_time_index)
         return output
 
 
+# TODO: Add test, currently does not pass
+# @tests_helper.mark_for_testing(inp=SineSource, shape=SineSource)
 class ShapeModulator(Module):
     """
     Modulate a given shape onto clicks in time domain. Nearby clicks will both get the shape, so they may overlap.
@@ -352,17 +446,17 @@ class ShapeModulator(Module):
         self.inp = inp
         self.shape = shape
 
-    def out(self, ts):
+    def out(self, clock_signal: ClockSignal):
         if self.last_signal is None:
-            self.last_signal = np.zeros_like(ts)
-        click_signal = self.inp(ts)
+            self.last_signal = clock_signal.zeros()
+        click_signal = self.inp(clock_signal)
         # like in SimpleLowpass, we really want a different window for every click. but for the moment,
         # we just use a single window for the whole frame
-        shape = self.shape(ts)
+        shape = self.shape(clock_signal)
         full_click_signal = np.concatenate((self.last_signal, click_signal), axis=0)
         out = scipy.signal.convolve(full_click_signal, shape, mode="valid")
         self.last_signal = click_signal
-        return out[-ts.shape[0]:, :]
+        return out[-clock_signal.shape[0]:, :]
 
 
 class ShapeExp(Module):
@@ -372,74 +466,30 @@ class ShapeExp(Module):
         self.decay = decay
         self.amplitude = amplitude
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
         shape = np.array([self.amplitude / pow(self.decay, i) for i in range(self.shape_length)]).reshape(-1,1)
         return shape
 
 
-class Lift(Module):
-    """Lifts a signal from [-1,1] to [0,1]"""
-    def __init__(self, inp: Module):
-        self.inp = inp
-
-    def out(self, ts):
-        res = self.inp(ts)
-        return res / 2 + 0.5
-
-
-class ScalarMultiplier(Module):
-    """Needed for inner generators, so that we can have a changing frequency that is, e.g., not just between [0,1] but
-    between [0,440]"""
-    # we could still pass a module as the value, instead of a constant float..
-    def __init__(self, inp: Module, value: float):
-        self.inp = inp
-        self.value = value
-
-    def __call__(self, ts):
-        return self.inp(ts) * self.value
-
-
-class Multiplier(Module):  # TODO: variadic input
-    def __init__(self, inp1: Module, inp2: Module):
-        self.inp1 = inp1
-        self.inp2 = inp2
-
-    def out(self, ts):
-        return self.inp1(ts) * self.inp2(ts)
-
-
-class PlainMixer(Module):
-    """Adds all input signals without changing their amplitudes"""
-    def __init__(self, *args):
-        self.out = lambda ts: reduce(np.add, [inp(ts) for inp in args]) / (len(args))
-
-
-class MultiScaler(Module):
-    """
-    Takes n input modules and n input amplitudes and produces n amplified output modules.
-    Combine with PlainMixer to create a Mixer.
-    """
-    pass #TODO
-
-
+@tests_helper.mark_for_testing()
 class ClickSource(Module):
     """
     Creates a click track [...,0,1,0,...]
     One 1 per num_samples
     """
-    def __init__(self, num_samples: Module):
+    def __init__(self, num_samples: Module = Constant(10)):
         self.num_samples = num_samples
         self.counter = 0
 
-    def out(self, ts: np.ndarray) -> np.ndarray:
-        num_samples = int(np.mean(self.num_samples(ts))) # hack to have same blocksize per frame, like Lowpass...
-        out = np.zeros_like(ts)
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        num_samples = int(np.mean(self.num_samples(clock_signal))) # hack to have same blocksize per frame, like Lowpass...
+        out = clock_signal.zeros()
         #print("counter", self.counter)
         #print("num 1ones:", int(np.ceil((ts.shape[0]-self.counter) / num_samples)))
-        for i in range(int(np.ceil((ts.shape[0]-self.counter) / num_samples))):
+        for i in range(int(np.ceil((clock_signal.shape[0]-self.counter) / num_samples))):
             out[self.counter + i * num_samples, :] = 1
-        self.counter += num_samples - (ts.shape[0] % num_samples)
-        self.counter = self.counter % ts.shape[0]
+        self.counter += num_samples - (clock_signal.shape[0] % num_samples)
+        self.counter = self.counter % clock_signal.shape[0]
         self.counter = self.counter % num_samples
         #print("click out", out)
         return out
@@ -451,6 +501,8 @@ class ClickSource(Module):
 ############################################
 # ======== Test composite modules ======== #
 
+
+# TODO: Import collecting mechanism
 def test_module(module: Module, num_frames=5, frame_length=2048, num_channels=1, sampling_frequency=44100, show=True):
     import matplotlib.pyplot as plt
     res = []
@@ -467,36 +519,20 @@ def test_module(module: Module, num_frames=5, frame_length=2048, num_channels=1,
         plt.show()
 
 
-def kernel_test():
-    ts = np.arange(512) / 44100
-    ts = ts[..., np.newaxis] * np.ones((1,))
-    length = PlainMixer(Parameter(1), ScalarMultiplier(Lift(SawSource(frequency=Parameter(10000))), 10))
-    k = KernelGenerator(Parameter(1), lambda x: x*x, length=length)
-    print("k", k.out(ts[:10, :]))
-    print(k.out(ts[:10, :]).shape)
-    print("---")
-    #lp = KernelConvolver(src, kernel_generator=k)
-
-#kernel_test()
+def lift(a):
+    """Lifts a signal from [-1,1] to [0,1]"""
+    return a / 2 + 0.5
 
 
-
+# TODO: Currently does not test atm.
+# @tests_helper.mark_for_testing()
 class ClickModulation(Module):
     def __init__(self):
-        #self.out = SineModulator(ShapeModulator(ClickSource(Parameter(400)), ShapeExp(200, decay=1.01)), carrier_frequency=Parameter(220))
-        self.wild_triangles = PlainMixer(*[TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3)])
-        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Parameter(100)))
-        test_module(self.out, num_frames=10)
+        self.wild_triangles = sum(TriangleSource(frequency=Random(220 * i, 0.000015)) for i in range(1, 3))
+        self.out = KernelConvolver(self.wild_triangles, KernelGenerator(lambda x: 1, length=Constant(100)))
+        # test_module(self.out, num_frames=10)
 
-        #self.out = TriangleSource(Parameter(220))
-        #self.one = TriangleSource(frequency=Random(110, 0.00003))
-        #self.two = TriangleSource(frequency=Random(440, 0.00006))
-        #self.out = PlainMixer(self.one, self.two)
-
-        #self.out = PlainMixer(*[TriangleSource(frequency=Random(110 * i, 0.000015 )) for i in range(1, 4)])
-        #self.out = SineSource(frequency=PlainMixer(Parameter(220), Multiplier(Lift(TriangleSource(frequency=Parameter(1))), Parameter(1))))
-
-
+@tests_helper.mark_for_testing()
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
@@ -506,29 +542,14 @@ class BabiesFirstSynthie(Module):
 
         #self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
 
-        self.changingsine0 = Multiplier(self.sin0, self.lfo)
+        self.changingsine0 = self.sin0 * self.lfo
         self.changingsine1 = SineModulator(self.sin0, Parameter(1))
         self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
 
-        self.src = SineSource(ScalarMultiplier(Lift(SineSource(Parameter(10))), 22))
+        self.src = SineSource(lift(SineSource(Parameter(10))) * 22)
         self.modulator = SineModulator(self.src, Parameter(10))
         self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
         self.out = self.lowpass
-
-
-class StepSequencing(Module):
-    def __init__(self):
-        self.sin0 = SineSource(frequency=Parameter(
-            440, lo=200, hi=600, key="f", knob="r_mixer", clip=True))
-        self.out = self.sin0
-
-
-class TestModule(Module):
-    def __init__(self):
-        for i in range(100):
-            setattr(self, f"freq{i}", Parameter(i))
-            setattr(self, f"sin{i}", SawSource(frequency=getattr(self, f"freq{i}")))
-        self.lp = SimpleLowPass(self.sin0, window_size=Parameter(2))
 
 
 # TODO: Make type, it needs set() and get()
@@ -546,5 +567,3 @@ def _copy(src: Mapping[str, ParamOrState],
             target.pop(k)
     if target:  # Some params were not set -> ignore.
         pass
-
-
