@@ -11,9 +11,12 @@ import queue
 import re
 import threading
 import typing
+import platform
 
-import rtmidi
-
+if platform.system() == 'Windows':
+    import rtmidi2 as rtmidi
+else:
+    import rtmidi
 
 MidiValue = int  # 0-127
 MidiValueNormalized = float  # 0...1
@@ -237,7 +240,7 @@ def interactively_make_name_mapping(port_name_regex, out_file):
         recorder.wait_for_knob()
     recorder.to_file(out_file)
     # Testing.
-    print(KnownKnobs(out_file))
+    print(KnownKnobs.from_file(out_file))
 
 
 def explore(port_name_regex):

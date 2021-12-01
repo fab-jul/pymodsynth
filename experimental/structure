@@ -1,0 +1,67 @@
+
+
+
+we have:
+
+infra:
+    base classes
+    clock
+    Parameter
+    math / boilerplate
+    collector
+    testing /debugging help / adhoc visualization
+
+
+modules:
+    sources
+    filters
+    composite
+        stepseq
+        drummachine
+    envelope generators
+    trigger modulator?
+
+
+synthies:
+    compositions of modules, top level obj, feeds into soundbuffer
+    -> hotreloadable!
+
+
+real world connection:
+    gimme_sound
+    graphics
+
+
+
+framework
+    base.py
+    sources.py
+    filters.py
+    composite.py
+    envelopes.py
+    io.py
+    testing.py
+    experimental/
+       new_sources.py
+       exp.py imports new_sources, sources, ...
+
+__init__.py
+  from base import *
+  from .. import *
+
+
+import shinyframework as shiny
+
+
+--
+nz
+No CableZ: Modular Synthesizers in Python
+mz
+Modular SynthesiZers
+
+mos: modular synthesizers
+
+
+
+
+
