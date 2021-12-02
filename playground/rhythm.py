@@ -269,14 +269,20 @@ class TriggerSource(Module):
 
     @staticmethod
     def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
-        """note value is the time distance between two triggers"""
+        frame_len = len(clock_signal.sample_indices)
         samples_per_note = round(samples_per_beat * note_value * 4)
-        spaced_trigger_indices = np.nonzero(pattern) samples_per_note
+        spaced_trigger_indices = np.nonzero(pattern)[0] * samples_per_note
+        trigger_pattern_length = len(pattern) * samples_per_note
         # what pattern-repetition are we at? where (offset) inside the frame is the current pattern-repetition?
-        rep_num = int(clock_signal.sample_indices[0] / (len(pattern) * samples_per_note))
-        rep_offset = clock_signal.sample_indices[0] % (len(pattern) * samples_per_note)
-        
-
+        offset = clock_signal.sample_indices[0] % trigger_pattern_length
+        reps = int(np.ceil(frame_len / trigger_pattern_length))
+        #print("reps", reps, frame_len, "/", trigger_pattern_length)
+        trigger_frames = np.concatenate(
+            [np.array(spaced_trigger_indices) + (i * trigger_pattern_length) for i in range(reps+1)])
+        trigger_frames = np.array(list(filter(lambda x: offset <= x < offset + frame_len, trigger_frames)))
+        trigger_frames = trigger_frames - offset
+        #print(trigger_frames)
+        return trigger_frames
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         bpm = np.mean(self.bpm(clock_signal))
@@ -284,9 +290,11 @@ class TriggerSource(Module):
         if samples_per_beat < 2:
             print("Warning: Cannot deal with samples_per_beat < 2")
             samples_per_beat = 2
-        trigger_indices_dict = {name: TriggerSource.pattern_to_triggers(clock_signal, samples_per_beat, pattern, note_val) for
-                                name, (pattern, note_vals) in self.patterns.items()}
+        trigger_indices_dict = {name: TriggerSource.pattern_to_triggers(clock_signal, samples_per_beat, pattern, note_value)
+                                for name, (pattern, note_value) in self.patterns.items()}
+        # TODO: we violate module interface by returning a Dict[str, np.ndarray]
         return trigger_indices_dict
+
 
 class DrumMachine(Module):
     """
