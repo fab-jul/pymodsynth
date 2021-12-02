@@ -271,7 +271,7 @@ class TriggerSource(Module):
     def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
         """note value is the time distance between two triggers"""
         samples_per_note = round(samples_per_beat * note_value * 4)
-        spaced_trigger_indices = np.nonzero(pattern) samples_per_note
+        spaced_trigger_indices = np.nonzero(pattern) * samples_per_note
         # what pattern-repetition are we at? where (offset) inside the frame is the current pattern-repetition?
         rep_num = int(clock_signal.sample_indices[0] / (len(pattern) * samples_per_note))
         rep_offset = clock_signal.sample_indices[0] % (len(pattern) * samples_per_note)
