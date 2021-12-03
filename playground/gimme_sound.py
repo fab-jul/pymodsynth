@@ -129,14 +129,30 @@ class SynthesizerController:
 
         self.modules_watcher.did_read_file_just_now()
 
-        print("Reading modules.py ...")
-        importlib.reload(modules)
+        print("Trying to reload modules.py ...")
+        # noinspection PyBroadException
         try:
-            new_instance = self._make_output_gen()
+            modules_new = importlib.import_module("modules", "playground")
+            importlib.reload(modules_new)
+            new_instance = self._make_output_gen(modules_module=modules_new)
         except:
             traceback.print_exc()
-            print(f"Blanked catch, not reloading...")
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
             return
+
+        # Try passing through one clock signal to catch errors in `out`.
+        clock_signal = self.clock.get_current_clock_signal()
+
+        # noinspection PyBroadException
+        try:
+            new_instance(clock_signal)
+        except:
+            traceback.print_exc()
+            print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
+            return
+
+        # All good, can use new code.
+        importlib.reload(modules)
 
         # Copy old state and params.
         new_instance.copy_params_and_state_from(
@@ -144,35 +160,42 @@ class SynthesizerController:
             src_state=self.state)
 
         self._set_output_gen(new_instance)
+        print("Reloaded modules!")
 
     def _set_output_gen(self, output_gen: modules.Module):
         """Called on init and when modules.py changes."""
         self.output_gen = output_gen
-        self.params = self.output_gen.find_params()
-        self.state = self.output_gen.find_state()
+        self.params = self.output_gen.get_params_by_name()
+        self.state = self.output_gen.get_states_by_name()
         self._update_key_mapping()
         self._update_knob_mapping()
 
     def _update_key_mapping(self):
-        self.key_mapping = {param.key: param
-                            for _, param in self.params.items()
-                            if param.key}
-
+        self.key_mapping = {}
+        for param in set(self.params.values()):
+            if not param.key:
+                continue
+            if param.key in self.key_mapping:
+                print(f"*** Duplicate key, `{param.key}` already used! Ignoring...", file=sys.stderr)
+                continue
+            self.key_mapping[param.key] = param
         print("Did update keymapping, keys=", self.key_mapping.keys())
         self.signal_window.set_interesting_keys(self.key_mapping.keys())
 
     def _update_knob_mapping(self):
         if not self.midi_controller:
             return
-
-        self.knob_mapping = {self.known_knobs.get(param.knob): param
-                             for _, param in self.params.items()
-                             if param.knob}
-
+        self.knob_mapping = {}
         self.midi_controller.reset_interesting_knobs()
-        for knob in self.knob_mapping:
+        for param in set(self.params.values()):
+            if not param.knob:
+                continue
+            if param.knob in self.knob_mapping:
+                print(f"*** Duplicate knob, `{param.knob}` already used! Ignoring...", file=sys.stderr)
+                continue
+            knob = self.known_knobs.get(param.knob)
+            self.knob_mapping[knob] = param
             self.midi_controller.register_interesting_knob(knob)
-
         print("Did update interesting knobs to", self.midi_controller.interesting_knobs)
 
     def _process_midi_controller_events(self):

@@ -33,10 +33,10 @@ def num_channels():
     return 2
 
 
-@pytest.fixture()
-def synthesizer_controller(num_samples, num_channels, basic_module):
+def _make_synthesizer_controller(
+        output_gen_class, num_samples, num_channels):
     return gimme_sound.SynthesizerController(
-        basic_module.__class__.__name__,
+        output_gen_class,
         sample_rate=44100,
         num_samples=num_samples,
         num_channels=num_channels,
@@ -44,8 +44,10 @@ def synthesizer_controller(num_samples, num_channels, basic_module):
     )
 
 
-def test_synthesizer_controller(num_samples, num_channels,
-                                time_stamps, synthesizer_controller):
+def test_synthesizer_controller(num_samples, num_channels, time_stamps, basic_module):
+    synthesizer_controller = _make_synthesizer_controller(
+        output_gen_class=basic_module.__class__.__name__,
+        num_samples=num_samples, num_channels=num_channels)
     outdata = np.empty((num_samples, num_channels), modules.OUT_DTYPE)
     synthesizer_controller.callback(
         outdata, num_samples=2048, timestamps=time_stamps, status=None)

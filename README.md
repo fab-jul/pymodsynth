@@ -4,7 +4,6 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
-
 ## First usage
 
 _TODO_: We should clean up the project structure.
