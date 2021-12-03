@@ -9,7 +9,7 @@ import random
 import re
 import typing
 from typing import (
-Any,
+    Any,
     Mapping,
     Union,
     MutableMapping,
@@ -114,6 +114,42 @@ class Module:
     the module graph defined in its constructor.
     A subclass should overwrite self.out, respecting its signature.
     """
+    def __init__(self):
+        self.collect = collector_lib.FakeCollector()
+
+    def collect_data(self, num_steps, clock: Clock,
+                     warmup_num_steps=100) -> Tuple[np.ndarray, Sequence[Tuple[str, Sequence[Any]]]]:
+        # Warmup.
+        for _ in range(warmup_num_steps):
+            clock_signal = clock()
+            self(clock_signal)
+
+        # Set collect to a useful instance.
+        collectors = self._set("collect", factory=collector_lib.Collector)
+
+        # Loop with `ts`
+        all_ts = []
+        for _ in range(num_steps):
+            clock_signal = clock()
+            self(clock_signal)
+            all_ts.append(clock_signal.ts)
+
+        # Reset back to fake collector
+        self._set("collect", factory=collector_lib.FakeCollector)
+
+        non_empty_collectors = {k: collector for k, collector in collectors.items() if collector}
+        if not non_empty_collectors:
+            raise ValueError("No module collected data!")
+
+        output = []
+        for k, collector in non_empty_collectors.items():
+            for shift_collector_name, shift_collector_values in collector:
+                full_k = (k + "." + shift_collector_name).strip(".")
+                output.append((full_k, shift_collector_values))
+        return np.concatenate(all_ts, axis=0), output
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        raise Exception("not implemented")
 
     def __rtruediv__(self, other):
         return _MathModule(operator.truediv, other, self)
@@ -164,6 +200,8 @@ class Module:
     def _get(self, cls: Type[T], prefix="", include_root=True) -> MutableMapping[str, T]:
         """Recursively find all instances of `cls`."""
         result = {}
+        if prefix == "" and include_root and isinstance(self, cls):
+            result[""] = self
         for var_name, var_instance in vars(self).items():
             if isinstance(var_instance, cls):  # Top-level.
                 full_name = f"{prefix}{var_name}"
@@ -219,6 +257,79 @@ class _MathModule(Module):
         if isinstance(module_or_number, Module):
             return module_or_number(clock_signal)
         return module_or_number
+
+
+# TODO: Revisit the whole API.
+#  The idea of this class is to support modules that do not rely on a clock_signal.
+#  E.g. Envelope Generators.
+class InputLessModule(Module):
+
+    def get_output(self):
+        pass
+
+
+class GaussEnvelopeGenerator(InputLessModule):
+
+    def __init__(self, elen):
+        super().__init__()
+        self.cache = None
+        self.elen: Parameter = elen
+
+    def get_output(self):
+        elen = round(self.elen.get())
+        attack = np.linspace(0, 2, elen//4)
+        peak = np.linspace(2, 1, elen//10)
+        hold = np.ones(elen*2)
+        decay = np.linspace(1, 0, elen)#//8)
+        zeros = np.zeros(elen*4)
+        #return np.array(10*[np.exp(-(x-(elen/2))**2 * 0.001) for x in range(elen)])
+        #x = np.arange(elen)
+        #return 10*np.exp(-(x-(elen/2))**2 * 0.001)
+        return np.concatenate((attack,
+                               peak,
+                               hold,
+                               decay,
+                               zeros), 0)
+
+
+class EnvelopeGenerator(InputLessModule):
+
+    def __init__(self, elen):
+        super().__init__()
+        self.cache = None
+        self.elen: Parameter = elen
+
+    def get_output(self):
+        elen = round(self.elen.get())
+        attack = np.linspace(0, 1, elen)
+        peak = np.linspace(1, 1.1, elen//4)
+        hold = np.ones(elen)
+        decay = np.linspace(1, 0, elen*4)
+        return np.concatenate((attack, peak, hold, decay), 0)
+
+
+class ADSREnvelopeGenerator(InputLessModule):
+
+    def __init__(self, attack, decay, sustain, release, hold):
+        super().__init__()
+        self.attack = attack
+        self.decay = decay
+        self.sustain = sustain
+        self.release = release
+        self.hold = hold or Parameter(100)
+
+    def get_output(self):
+        t_attack = round(self.attack.get())
+        t_decay = round(self.decay.get())
+        sustain_height = self.sustain.get()
+        t_hold = round(self.hold.get())
+        t_release = round(self.release.get())
+
+        attack = np.linspace(0, 1, t_attack)
+        decay = np.linspace(1, sustain_height, t_decay)
+        hold = np.ones(t_hold) * sustain_height
+        release = np.linspace(sustain_height, 0, t_release)
+        return np.concatenate((attack, decay, hold, release), 0)
 
 
 @tests_helper.mark_for_testing(value=lambda: 1)
@@ -522,20 +633,9 @@ def lift(a):
 class BabiesFirstSynthie(Module):
     def __init__(self):
         self.lfo = SineSource(Parameter(1))
-        self.sin0 = SineSource(frequency=Parameter(440*(2/3)*(2/3)))
         self.sin1 = SineSource(frequency=Parameter(440))
-        self.sin2 = SineSource(frequency=Parameter(220))
 
-        #self.out = PlainMixer(self.sin0, self.sin1, self.sin2)
-
-        self.changingsine0 = self.sin0 * self.lfo
-        self.changingsine1 = SineModulator(self.sin0, Parameter(1))
-        self.lowpass = SimpleLowPass(self.changingsine0, window_size=Parameter(2))
-
-        self.src = SineSource(lift(SineSource(Parameter(10))) * 22)
-        self.modulator = SineModulator(self.src, Parameter(10))
-        self.lp = SimpleLowPass(self.modulator, window_size=Parameter(16))
-        self.out = self.lowpass
+        self.out = self.sin1
 
 
 # TODO: Make type, it needs set() and get()

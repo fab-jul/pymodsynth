@@ -116,12 +116,12 @@ class SynthesizerController:
 
         self._set_output_gen(self.output_gen)
 
-    def _make_output_gen(self) -> modules.Module:
-        avaiable_vars = {**vars(modules), **vars(rhythm)}
-        if self.output_gen_class not in avaiable_vars:
+    def _make_output_gen(self, modules_module=modules) -> modules.Module:
+        available_vars = vars(modules_module)
+        if self.output_gen_class not in available_vars:
             raise ValueError(f"Invalid class: {self.output_gen_class}")
         print(f"Creating {self.output_gen_class}...")
-        return avaiable_vars[self.output_gen_class]()
+        return available_vars[self.output_gen_class]()
 
     def reload_modules(self):
         if not self.modules_watcher.has_changes:
