@@ -85,6 +85,8 @@ class Clock:
 
 class State:
 
+    __special_name__ = "State"
+
     def __init__(self, *, initial_value=None):
         self._value = initial_value
 
@@ -100,6 +102,17 @@ class State:
 
 
 T = TypeVar("T")
+
+
+def _is_module_subclass(instance):
+    try:
+        all_base_classes = instance.__class__.__mro__
+    except AttributeError:
+        return False
+    for c in all_base_classes:
+        if c.__name__ == Module.__name__:
+            return True
+    return False
 
 
 class Module:
@@ -146,6 +159,9 @@ class Module:
                 full_k = (k + "." + shift_collector_name).strip(".")
                 output.append((full_k, shift_collector_values))
         return np.concatenate(all_ts, axis=0), output
+
+    def out_mean_int(self, clock_signal: ClockSignal) -> int:
+        return round(np.mean(self.out(clock_signal)))
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
@@ -199,13 +215,13 @@ class Module:
         if prefix == "" and include_root and isinstance(self, cls):
             result[""] = self
         for var_name, var_instance in vars(self).items():
-            if isinstance(var_instance, cls):  # Top-level.
+            if getattr(var_instance, "__special_name__", None) == cls.__special_name__:
                 full_name = f"{prefix}{var_name}"
                 var_instance.name = full_name
                 result[full_name] = var_instance
                 continue
             # If it's a Module, we go into the recursion.
-            if isinstance(var_instance, Module):
+            if _is_module_subclass(var_instance):
                 result.update(var_instance._get(cls, prefix=f"{var_name}."))
         return result
 
@@ -356,6 +372,8 @@ class Constant(Module):
 
 @tests_helper.mark_for_testing(value=lambda: 1)
 class Parameter(Constant):
+
+    __special_name__ = "Parameter"
 
     def __init__(self,
                  value: float,
