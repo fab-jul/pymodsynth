@@ -231,8 +231,7 @@ class TriggerSource(Module):
             [np.array(spaced_trigger_indices) + (i * trigger_pattern_length) for i in range(reps + 1)])
         trigger_frames = np.array(list(filter(lambda x: offset <= x < offset + frame_len, trigger_frames)))
         trigger_frames = trigger_frames - offset
-        # print(trigger_frames)
-        return trigger_frames
+        return trigger_frames.astype(int)
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         bpm = np.mean(self.bpm(clock_signal))

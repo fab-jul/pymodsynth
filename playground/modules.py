@@ -163,7 +163,7 @@ class Module:
             t0 = time.time()
 
         out = self.out(clock_signal)
-        if out.shape != clock_signal.ts.shape and "TriggerSource" not in str(type(self)): # hack without isinstance because TriggerSource cannot be imported atm.
+        if "TriggerSource" not in str(type(self)) and out.shape != clock_signal.ts.shape: # hack without isinstance because TriggerSource cannot be imported atm.
             print(type(self))
             raise ValueError(f"Failure at {self.__class__.__name__}")
 
