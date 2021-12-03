@@ -144,6 +144,13 @@ class Module:
         _copy(src=src_state, target=self.find_state())
 
 
+class Id(Module):
+    """Every Monoid needs a neutral element ;)"""
+
+    def __init__(self, inp: Module):
+        self.out = inp
+
+
 class _MathModule(Module):
     """Implement various mathematical operations on modules, see base class."""
 
@@ -246,6 +253,9 @@ class Parameter(Constant):
     def set_relative(self, rel_value: float):
         """Set with value in [0, 1], and we map to [lo, hi]."""
         self.set(self.lo + self.span * rel_value)
+
+
+P = Parameter
 
 
 @tests_helper.mark_for_testing()

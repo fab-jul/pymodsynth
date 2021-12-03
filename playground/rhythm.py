@@ -9,15 +9,7 @@ import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
 
 import matplotlib.pyplot as plt
-
 P = Parameter
-
-
-class Id(Module):
-    """Every Monoid needs a neutral element ;)"""
-
-    def __init__(self, inp: Module):
-        self.out = inp
 
 
 class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keying work!
@@ -100,7 +92,6 @@ class EnvelopeSource(Module):
 # Api for envelope generators: They pass clock_signal to their param-sources, but only generate an envelope
 # for desired indices. Those are clear from the trigger signal of the calling function.
 # Therefore, __call__ takes a clock signal, a list of desired indices and returns a list of envelopes.
-# TODO: consider if we should enhance the Module.call signature with optional desired indices.
 
 
 def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
@@ -167,7 +158,7 @@ class RectangleEnvelopeGen(EnvelopeGen):
 
 class ADSREnvelopeGen(EnvelopeGen):
     """Borrowed from modules.py. Equivalent to a sum of FuncEnvelopeGens."""
-
+    # TODO: rewrite as FuncEnvelopeGen concatenation
     def __init__(self, attack: Module, decay: Module, sustain: Module, release: Module, hold: Module):
         self.attack = attack
         self.decay = decay
