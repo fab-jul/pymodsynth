@@ -192,54 +192,7 @@ class ADSREnvelopeGen(EnvelopeGen):
             res.append(envelope)
         return res
 
-
 #######################################################################################################
-# DrumModule Infra
-
-
-class OldTriggerModulator:
-    """
-    Stateful:
-    Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
-    Combine overlaps with a suitable function: max, fst, snd, add, ...
-    TODO: should this be a module? The call signature says no, but we could make it one and pass arguments before
-    calling __call__ or out().
-    """
-
-    def __init__(self):
-        self.previous = None
-
-    def __call__(self, clock_signal: ClockSignal, triggers, envelope_gen, combinator=np.add):
-        """Generate one envelope per trigger"""
-
-        trigger_indices = np.nonzero(triggers)[0]
-        envelopes = envelope_gen(clock_signal, desired_indices=trigger_indices)
-        current_signal = np.zeros(shape=clock_signal.ts.shape)
-        previous_signal = self.previous if self.previous is not None and len(self.previous) > 0 else np.zeros(
-            shape=clock_signal.ts.shape)
-        if envelopes:
-            # does any envelope go over frame border?
-            latest_envelope_end = max([i + len(env) for i, env in zip(trigger_indices, envelopes)])
-            if latest_envelope_end > clock_signal.num_samples:
-                remainder = latest_envelope_end - clock_signal.num_samples
-            else:
-                remainder = 0
-            current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
-            for i, envelope in zip(trigger_indices, envelopes):
-                current_signal[i:i + len(envelope)] = envelope.reshape((-1, 1))
-                # plt.plot(envelope)
-                # plt.show()
-        # combine the old and new signal using the given method
-        max_len = max(len(previous_signal), len(current_signal))
-        previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
-        current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
-        result = combinator(previous_signal, current_signal)
-        self.previous = result[len(clock_signal.ts):]
-        res = result[:len(clock_signal.ts)]
-        return res
-
-
-#####################################################
 
 
 class Pattern(NamedTuple):
@@ -254,15 +207,6 @@ class TrackConfig(NamedTuple):
     envelope_gen: EnvelopeGen
     carrier: Module
     combinator: Callable = np.add
-
-
-class OldTrack(NamedTuple):
-    name: str
-    pattern: List[int]
-    note_values: float
-    envelope_gen: Callable
-    carrier: Module
-    trigger_modulator: OldTriggerModulator
 
 
 class TriggerSource(Module):
@@ -370,6 +314,28 @@ class Track(Module):
         self.out = self.carrier * self.trigger_modulator
 
 
+"""
+    Parametrize with trigger patterns for different tracks (kick, snare, hihat, ...).
+    Trigger patterns go over any number of bars and repeat forever.
+    The trigger patterns live in bar-time, not sample-time:
+    The trigger patterns will be spaced out in time according to the OldDrumMachine's bpm.
+    A beat (as in bpm) is 1/4 of a bar.
+    A trigger has no length! The length of an envelope is the envelope generator's concern.
+    Combining overlapping envelopes is the OldTriggerModulator's concern.
+    Ways to write down a trigger pattern:
+        Direct:     [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0], (1 bar) or (1/16) or (2 bars) etc
+                    Needs additional information: Either how many bars this is, or the note length.
+        Inverse:    Each entry is the inverse of the length of the pause after the trigger.
+                    [4,4,4,4] -> [1,1,1,1], (1 bar)
+                    [2,4,4] -> [1,0,1,1]
+                    [2,2] -> [1,0,1,0]
+                    Downside: How to do offbeats, or other patterns that don't start at 1?
+        ...?
+    Currently supported: Direct with note_value, see OldTrack class.
+    Every track has its own envelope generator and a carrier wavefunction to control the pitch.
+"""
+
+
 class DrumMachine(Module):
     def __init__(self, bpm: Module, track_cfg_dict: Dict[str, TrackConfig]):
         self.bpm = bpm
@@ -398,147 +364,6 @@ class NewDrumTest(Module):
                                            ),
                       }
         self.out = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)
-
-
-class OldDrumMachine(Module):
-    """
-    Parametrize with trigger patterns for different tracks (kick, snare, hihat, ...).
-    Trigger patterns go over any number of bars and repeat forever.
-    The trigger patterns live in bar-time, not sample-time:
-    The trigger patterns will be spaced out in time according to the OldDrumMachine's bpm.
-    A beat (as in bpm) is 1/4 of a bar.
-    A trigger has no length! The length of an envelope is the envelope generator's concern.
-    Combining overlapping envelopes is the OldTriggerModulator's concern.
-    Ways to write down a trigger pattern:
-        Direct:     [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0], (1 bar) or (1/16) or (2 bars) etc
-                    Needs additional information: Either how many bars this is, or the note length.
-        Inverse:    Each entry is the inverse of the length of the pause after the trigger.
-                    [4,4,4,4] -> [1,1,1,1], (1 bar)
-                    [2,4,4] -> [1,0,1,1]
-                    [2,2] -> [1,0,1,0]
-                    Downside: How to do offbeats, or other patterns that don't start at 1?
-        ...?
-    Currently supported: Direct with note_value, see OldTrack class.
-    Every track has its own envelope generator and a carrier wavefunction to control the pitch.
-    """
-
-    def __init__(self, bpm: Module, tracks: List[OldTrack]):
-        super().__init__()
-        self.bpm = bpm
-        self.tracks = tracks
-
-    @staticmethod
-    def _track_to_triggers(track: OldTrack, samples_per_beat):
-        """Create a time signal of triggers. The length corresponds to the number of bars in the given track pattern"""
-        _, pattern, note_value, _, _, _ = track
-        samples_per_note = round(samples_per_beat * note_value * 4)  # e.g., 1/16*4 = (1/4 * samples_per_beat) per note
-        indices = np.nonzero(pattern)[0] * samples_per_note
-        triggers = np.zeros(len(pattern) * samples_per_note)
-        # print("indices", indices)
-        triggers[indices] = 1
-        # plt.plot(triggers)
-        # plt.show()
-        return triggers
-
-    @staticmethod
-    def make_trigger_signal(clock_signal: ClockSignal, track: OldTrack, samples_per_beat):
-        """Convert a track (pattern, note_value) to a trigger signal in sample-space with the correct length."""
-        triggers = OldDrumMachine._track_to_triggers(track, samples_per_beat)
-        # these have different lengths depending on the number of bars given. loop until end of frame.
-        orig_trig = triggers[:]
-        while len(triggers) < len(clock_signal.ts):
-            triggers = np.append(triggers, orig_trig, axis=0)
-        # we started all triggers from time 0. apply the offset
-        offset = clock_signal.sample_indices[0] % len(triggers)
-        triggers = np.roll(triggers, -offset)
-        res = triggers[:len(clock_signal.ts)]
-        return res
-
-    def out(self, clock_signal: ClockSignal):
-        # a beat is 1/4 bar. bps = bpm/60. 1/bps = seconds / beat. sampling_freq = samples / second.
-        # -> samples / beat = sampling_freq / bps
-        bpm = np.mean(self.bpm(clock_signal))
-        samples_per_beat = SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
-        if samples_per_beat < 2:
-            print("Warning: Cannot deal with samples_per_beat < 2")
-            samples_per_beat = 2
-        # generate all trigger signals.
-        trigger_signal = [OldDrumMachine.make_trigger_signal(clock_signal, track, samples_per_beat) for track in
-                          self.tracks]
-
-        # now these trigger_signals must be given envelopes. this is an operation with time-context, and should be
-        # handled by a pro - that is a module which deals with things like last_generated_signal or future_cache etc.
-        # for now: the track's own OldTriggerModulator. TODO: discuss if this is where the OldTriggerModulator should live.
-
-        # for name, tri in zip(["kick trigger", "snare trigger", "hihat trigger"], trigger_signal):
-        #    self.collect(name) << tri
-
-        signals = []
-        for track, trigger_track in zip(self.tracks, trigger_signal):
-            signal = track.trigger_modulator(clock_signal, trigger_track, track.envelope_gen)
-
-            # modulate envelope with its carrier
-            carrier = track.carrier(clock_signal)[:len(signal)]
-            signal = signal * carrier
-
-            self.collect(track.name) << signal
-
-            signals.append(signal)
-        sum_of_tracks = functools.reduce(np.add, signals)  # TODO: in the future, return many values instead of sum.
-        return sum_of_tracks
-
-
-class Drummin(Module):
-
-    def __init__(self):
-        super().__init__()
-
-        # self.out = EnvelopeSource(ExpEnvelopeGen(attack_length=P(100), attack_curvature=P(3), decay_length=P(100), decay_curvature=P(2)))
-
-        kick = OldTrack(name="kick",
-                        pattern=[1, 0, 1, 0, 1, 0, 1, 0],
-                        note_values=1 / 8,
-                        # envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(2000)),
-                        # envelope_gen=ExpEnvelopeGen(attack_length=P(100), attack_curvature=P(3), decay_length=P(1000), decay_curvature=P(2)),
-                        envelope_gen=FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | FuncEnvelopeGen(
-                            func=np.exp, length=P(1000), curvature=P(2), start_val=Constant(1), end_val=Constant(0)),
-                        carrier=TriangleSource(frequency=P(60)) + NoiseSource() * 0.05,
-                        trigger_modulator=OldTriggerModulator(),
-                        )
-        snare = OldTrack(name="snare",
-                         # pattern=[0, 0, 0, 0, 0, 0, 0, 0,    0, 0, 0, 0, 0, 0, 0, 0,    0, 1, 0, 1, 0, 0, 0, 0,  0, 1, 0, 1, 0, 1, 1, 1],
-                         pattern=[0, 0, 0, 0, 1, 0, 0, 0],
-                         note_values=1 / 16,
-                         # envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(5), sustain=P(1), release=P(100), hold=P(400)),
-                         envelope_gen=(ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
-                                                      decay_curvature=P(3)) |
-                                       ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5), decay_length=P(500),
-                                                      decay_curvature=P(1000))) >> 1,
-                         carrier=TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6,
-                         trigger_modulator=OldTriggerModulator(),
-                         )
-        hihat = OldTrack(name="hihat",
-                         pattern=[0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0],
-                         note_values=1 / 8,
-                         # envelope_gen=ADSREnvelopeGen(attack=P(10), decay=P(2), sustain=P(1), release=P(100), hold=P(100)),
-                         envelope_gen=ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
-                                                     decay_curvature=P(200)) * 0.5,
-                         carrier=NoiseSource(),
-                         trigger_modulator=OldTriggerModulator(),
-                         )
-        notes = OldTrack(name="notes",
-                         pattern=[1, 0, 1, 0, 1, 1, 0, 0],
-                         note_values=1 / 4,
-                         envelope_gen=RectangleEnvelopeGen(length=P(10000)),
-                         trigger_modulator=OldTriggerModulator(),
-                         carrier=SineSource(frequency=Random(max_amplitude=880, change_chance=0.00009)) * 0.05,
-                         )
-
-        self.output = OldDrumMachine(bpm=Parameter(120, key='q'), tracks=[kick, hihat, notes])
-
-        # self.synthie = StepSequencing()
-
-        self.out = self.output  # + self.synthie
 
 
 if __name__ == "__main__":
