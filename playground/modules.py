@@ -540,8 +540,10 @@ class FrameBuffer:
 
     def __init__(self):
         self._buffer: Optional[collections.deque] = None
+        self._frame_size = 0
 
     def push(self, frame: np.ndarray, max_frames_to_buffer: int):
+        self._frame_size = frame.shape[0]
         buffer = self._update_buffer(frame.shape, max_frames_to_buffer)
         buffer.append(frame)  # We append on the right.
 
@@ -551,6 +553,14 @@ class FrameBuffer:
     def iter_buffered(self) -> typing.Iterable[np.ndarray]:
         assert self._buffer
         return iter(self._buffer)
+
+    @property
+    def maxlen(self):
+        return self._buffer.maxlen
+
+    @property
+    def frame_size(self):
+        return self._frame_size
 
     def _update_buffer(self, frame_shape: typing.Tuple[int, int], max_frames_to_buffer: int) -> collections.deque:
         if self._buffer is None:
@@ -981,6 +991,84 @@ def to_melody(trigger, melody: _Cycler):
     return np.concatenate(output, 0)
 
 
+class DelayElement:
+    def __init__(self, time, feedback, gain=1, additive=False):
+
+        self.time = time
+        self.feedback = feedback
+        self.gain = gain
+        self.delay = 0
+        self.additive = additive
+
+    def __call__(self, signal_buffer):
+        # todo: potentially fillter the repeats so they sound smoother and not sound so metallic
+        n = signal_buffer.maxlen - self.time - 1
+        full_signal = signal_buffer.get()
+        delayed_signal = full_signal[n*signal_buffer.frame_size:(n+1)*signal_buffer.frame_size]
+        if self.additive:
+            self.delay = delayed_signal + self.delay * self.feedback
+        else:
+            self.delay = delayed_signal * (1 - self.feedback) + self.delay * self.feedback
+
+        return self.delay * self.gain
+
+
+class SimpleDelay(Module):
+
+    def __init__(self, signal: Module, time, feedback, mix, additive=False):
+        super().__init__()
+
+        self.signal = signal
+        self.buffer = FrameBuffer()
+
+        self.delay = DelayElement(time=time, feedback=feedback, additive=additive)
+
+        self.mix = mix
+        self.delay_buffer_size = time + 1
+
+    def out(self, clock_signal: ClockSignal):
+        input_signal = self.signal(clock_signal)
+
+        self.buffer.push(input_signal, max_frames_to_buffer=self.delay_buffer_size)
+
+        return input_signal * (1 - self.mix) + self.delay(self.buffer) * self.mix
+
+
+class DReverb(Module):
+
+    def __init__(self, signal: Module):
+        super().__init__()
+
+        self.signal = signal
+        self.buffer = FrameBuffer()
+
+        self.delay_elements = [
+            DelayElement(time=4, feedback=0.9, gain=3),
+            # DelayElement(time=10, feedback=0.7, gain=1),
+            # DelayElement(time=7, feedback=0.3, gain=0.2),
+            # DelayElement(time=10, feedback=0.3, gain=0.3),
+            # DelayElement(time=12, feedback=0.2, gain=0.3),
+            # DelayElement(time=14, feedback=0.2, gain=0.2),
+            # DelayElement(time=16, feedback=0.2, gain=0.1),
+        ]
+
+        self.mix = 0.6
+        self.delay_buffer_size = 20
+
+    def out(self, clock_signal: ClockSignal):
+        input_signal = self.signal(clock_signal)
+
+        self.buffer.push(input_signal, max_frames_to_buffer=self.delay_buffer_size)
+
+        pseudo_reverb = 0
+        for delay in self.delay_elements:
+            pseudo_reverb += delay(self.buffer)
+
+        # todo: add a limiter for pseudo reverb volume so it can get gritty with high gain without distortying
+
+        return input_signal * (1 - self.mix) + pseudo_reverb * self.mix
+
+
 class Reverb(Module):
     def __init__(self, m, alpha: Module, max_decay: Module):
         super().__init__()
@@ -1101,24 +1189,29 @@ class Buttering(Module):
             envelope=EnvelopeGenerator(self.e),
             melody_randomizer=Parameter(0, knob="z")
         )
-        self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
-                                                  wave_generator_cls=SawSource,)
+        self.out = DReverb(self.melody_highs)
 
-        self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
-        self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
-        self.melody = (self.mixer_c1 * self.melody_highs +
-                       self.mixer_c2 * self.melody_lows)
+        # self.out = SimpleDelay(self.melody_highs, mix=0.6, time=4, feedback=0.3)
 
-        self.step_bass = StepSequencer(
-            wave_generator_cls=SineSource,
-            base_frequency=self.base_freq2,
-            bpm=self.bpm,
-            melody=[1, 5, 3, 5],
-            steps=[1],
-            gate="SSSH")
+        # self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
+        #                                           wave_generator_cls=SawSource,)
+        #
+        # self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
+        # self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
+        # self.melody = (self.mixer_c1 * self.melody_highs +
+        #                self.mixer_c2 * self.melody_lows)
+        #
+        # self.step_bass = StepSequencer(
+        #     wave_generator_cls=SineSource,
+        #     base_frequency=self.base_freq2,
+        #     bpm=self.bpm,
+        #     melody=[1, 5, 3, 5],
+        #     steps=[1],
+        #     gate="SSSH")
+        #
+        # self.filtered = ButterworthFilter(inp=self.melody+self.step_bass*2, f_low=P(0.01, key="g"), f_high=P(10000, key="h"), mode="bp")
 
-        self.filtered = ButterworthFilter(inp=self.melody+self.step_bass*2, f_low=P(0.01, key="g"), f_high=P(10000, key="h"), mode="bp")
-        self.out = self.filtered
+        # self.out = self.filtered
 
 
 
