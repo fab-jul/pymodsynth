@@ -10,6 +10,7 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
+import re
 import dataclasses
 import importlib
 import os.path
@@ -65,14 +66,15 @@ def call_timers():
         del _TIMERS[i]
 
 
-def _get_modules_path():
+def _get_path_of_module(name):
     current_dir = os.path.dirname(__file__)
-    return os.path.join(current_dir, "modules.py")
+    return os.path.join(current_dir, name)
 
 
 class SynthesizerController:
 
-    def __init__(self, output_gen_class: str, sample_rate, num_samples, num_channels,
+    def __init__(self,
+                 modules_file_name: str, output_gen_class: str, sample_rate, num_samples, num_channels,
                  signal_window: window_lib.SignalWindow):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
@@ -95,11 +97,14 @@ class SynthesizerController:
             print(f"ERROR: {e}")
             self.known_knobs = midi_lib.KnownKnobs({})
 
+        self.modules_file_name = modules_file_name
         self.output_gen_class = output_gen_class
         self.output_gen = self._make_output_gen()
 
-        self.modules_watcher = filewatcher.FileModifiedTimeTracker(
-            _get_modules_path())
+        modules_file_path = _get_path_of_module(modules_file_name)
+        if not os.path.isfile(modules_file_path):
+            raise FileNotFoundError(f"File not found: {modules_file_path}!")
+        self.modules_watcher = filewatcher.FileModifiedTimeTracker(modules_file_path)
         self.modules_watcher.did_read_file_just_now()
 
         self.midi_controller: typing.Optional[midi_lib.Controller] = None
@@ -116,12 +121,21 @@ class SynthesizerController:
 
         self._set_output_gen(self.output_gen)
 
-    def _make_output_gen(self, modules_module=modules) -> modules.Module:
-        available_vars = vars(modules_module)
-        if self.output_gen_class not in available_vars:
-            raise ValueError(f"Invalid class: {self.output_gen_class}")
+    @property
+    def modules_import_name(self) -> str:
+        """Strip the .py!"""
+        return re.sub(r"\.py$", "", self.modules_file_name)
+
+    def _make_output_gen(self, module_to_check=None) -> modules.Module:
+        if module_to_check is None:
+            module_to_check = importlib.import_module(self.modules_import_name, package="playground")
+        available = vars(module_to_check)
+        if self.output_gen_class not in available:
+            raise ValueError(
+                f"Invalid class: `{self.output_gen_class}`, not in file `{self.modules_file_name}`!"
+                f"Available: " + "\n".join(sorted(available.keys())))
         print(f"Creating {self.output_gen_class}...")
-        return available_vars[self.output_gen_class]()
+        return available[self.output_gen_class]()
 
     def reload_modules(self):
         if not self.modules_watcher.has_changes:
@@ -129,12 +143,12 @@ class SynthesizerController:
 
         self.modules_watcher.did_read_file_just_now()
 
-        print("Trying to reload modules.py ...")
+        print(f"Trying to reload {self.modules_file_name}...")
         # noinspection PyBroadException
         try:
-            modules_new = importlib.import_module("modules", "playground")
+            modules_new = importlib.import_module(self.modules_import_name, "playground")
             importlib.reload(modules_new)
-            new_instance = self._make_output_gen(modules_module=modules_new)
+            new_instance = self._make_output_gen(module_to_check=modules_new)
         except:
             traceback.print_exc()
             print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
@@ -151,19 +165,17 @@ class SynthesizerController:
             print("*** Caught exception while reloading, rolling back...", file=sys.stderr)
             return
 
-        # All good, can use new code.
-        importlib.reload(modules)
-
         # Copy old state and params.
         new_instance.copy_params_and_state_from(
             src_params=self.params,
             src_state=self.state)
 
+        # All good, can use new code.
         self._set_output_gen(new_instance)
-        print("Reloaded modules!")
+        print(f"Reloaded {self.modules_file_name}!")
 
     def _set_output_gen(self, output_gen: modules.Module):
-        """Called on init and when modules.py changes."""
+        """Called on init and when `self.modules_file_name` changes."""
         self.output_gen = output_gen
         self.params = self.output_gen.get_params_by_name()
         self.state = self.output_gen.get_states_by_name()
@@ -257,7 +269,7 @@ class SynthesizerController:
         self.signal_window.set_signal(outdata)
 
 
-def start_sound(output_gen_class: str, device: int):
+def start_sound(modules_file_name: str, output_gen_class: str, device: int):
     if device < 0:
         device = None  # Auto-select.
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
@@ -270,6 +282,7 @@ def start_sound(output_gen_class: str, device: int):
         EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
 
     syntheziser_controller = SynthesizerController(
+        modules_file_name=modules_file_name,
         output_gen_class=output_gen_class,
         sample_rate=sample_rate,
         num_channels=num_channels,
@@ -303,14 +316,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[parser])
     parser.add_argument(
+        "--modules_file_name", default="modules.py",
+        help="The file to load output_gen from, and to watch and react to saves!")
+    parser.add_argument(
         "--output_gen_class", required=True,
-        help="A `Module` subclass in modules.py.")
+        help="A `Module` subclass in MODULES_FILE_NAME.")
     parser.add_argument(
         '-d', '--device', type=int, default=-1,
         help='output device (numeric ID or substring)')
     args = parser.parse_args(remaining)
 
-    start_sound(args.output_gen_class, args.device)
+    start_sound(args.modules_file_name, args.output_gen_class, args.device)
 
 
 if __name__ == "__main__":

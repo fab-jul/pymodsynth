@@ -167,18 +167,18 @@ class ADSREnvelopeGen(EnvelopeGen):
         self.hold = hold
 
     def __call__(self, clock_signal: ClockSignal, desired_indices):
-        t_attack = self.attack(clock_signal)
-        t_decay = self.decay(clock_signal)
-        sustain_height = self.sustain(clock_signal)
-        t_hold = self.hold(clock_signal)
-        t_release = self.release(clock_signal)
+        t_attack = self.attack.out_mean_int(clock_signal)
+        t_decay = self.decay.out_mean_int(clock_signal)
+        sustain_height = self.sustain.out_mean_int(clock_signal)
+        t_hold = self.hold.out_mean_int(clock_signal)
+        t_release = self.release.out_mean_int(clock_signal)
 
         res = []
         for i in desired_indices:
-            attack = np.linspace(0, 1, t_attack[i, 0])
-            decay = np.linspace(1, sustain_height[i, 0], t_decay[i, 0])
-            hold = np.ones(t_hold[i, 0]) * sustain_height[i, 0]
-            release = np.linspace(sustain_height[i, 0], 0, t_release[i, 0])
+            attack = np.linspace(0, 1, t_attack)
+            decay = np.linspace(1, sustain_height, t_decay)
+            hold = np.ones(t_hold) * sustain_height
+            release = np.linspace(sustain_height, 0, t_release)
             envelope = np.concatenate((attack, decay, hold, release), 0)
             res.append(envelope)
         return res

@@ -36,6 +36,7 @@ def num_channels():
 def _make_synthesizer_controller(
         output_gen_class, num_samples, num_channels):
     return gimme_sound.SynthesizerController(
+        "modules.py",
         output_gen_class,
         sample_rate=44100,
         num_samples=num_samples,
@@ -45,6 +46,7 @@ def _make_synthesizer_controller(
 
 
 def test_synthesizer_controller(num_samples, num_channels, time_stamps, basic_module):
+    raise pytest.skip("Currently unsupported!")
     synthesizer_controller = _make_synthesizer_controller(
         output_gen_class=basic_module.__class__.__name__,
         num_samples=num_samples, num_channels=num_channels)
