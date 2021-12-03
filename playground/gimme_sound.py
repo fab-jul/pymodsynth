@@ -24,9 +24,9 @@ import sounddevice as sd
 
 from playground import filewatcher
 from playground import midi_lib
-from playground import window_lib
+from playground import live_graph_modern_gl as window_lib
 from playground import modules
-
+from playground import rhythm
 
 # Can contain:
 # - KeyAndMouseEvent
@@ -103,7 +103,7 @@ class SynthesizerController:
         self.midi_controller: typing.Optional[midi_lib.Controller] = None
         try:
             self.midi_controller = midi_lib.Controller.make()
-        except midi_lib.ControllerError as e:
+        except Exception as e:
             print(f"Caught: {e}")
 
         Timer(fire_every=1,
@@ -115,7 +115,7 @@ class SynthesizerController:
         self._set_output_gen(self.output_gen)
 
     def _make_output_gen(self) -> modules.Module:
-        avaiable_vars = vars(modules)
+        avaiable_vars = {**vars(modules), **vars(rhythm)}
         if self.output_gen_class not in avaiable_vars:
             raise ValueError(f"Invalid class: {self.output_gen_class}")
         print(f"Creating {self.output_gen_class}...")
