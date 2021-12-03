@@ -5,11 +5,48 @@ Modular Synthesizer in Python
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
 
-## WIP
+## First usage
+
+_TODO_: We should clean up the project structure.
 
 ```sh
-python gimme_sound.py -d -1 --output_gen_class=FooBar
+export PYTHONPATH=$(pwd)
+python playground/gimme_sound.py --output_gen_class=BabiesFirstSynthie
 ```
+
+## Contribute
+
+### Guidelines
+
+#### Remove merged feature branches
+
+```sh
+BRANCH=<branch>
+git branch -d "$BRANCH"       # Delete locally
+git push origin -d "$BRANCH"  # Delete remotely
+```
+
+## Milestones
+
+- Framework:
+  - [ ] Make sure everything we have in main works on macOS and windows
+  - [ ] Visualize arbitrary signals.
+  - [ ] Automatic testing (github integration?)
+  - [ ] Cache outputs.
+- Modules:
+  - [ ] Kick and Snare (drum machine).
+  - [ ] Filters (low/mi/high - buttersworth).
+  - [ ] Filters (decay / reverb etc.)
+  - [ ] Record with microphone.
+  - [ ] Input samples.
+  - [ ] Record output of the root module into a wav file for sharing/re-use.
+  - [ ] Visual feedback in the GUI / explore keyboard and mouse again.
+
+
+
+---
+
+# Old stuff.
 
 ## Random Ideas
 
@@ -56,24 +93,6 @@ def saw_tooth(t, duration=1):
 - Input samples
 - Record our sound
 - Visual feedback in the GUI / explore keyboard and mouse again
-
-
-## Considerations
-- some modules have inner state (modulator has its own clock to create a sine). these need to know the ts created by the callback. 
--> pass [ts] as the first channel[0], and have signal_out / signal_in in channel[1]
-
-
-- callback:
-create ts :: [sampling_time]
-
-generator :: (sampling_times, _) -> (sampling_times, signal_values)
-
-filter :: (sampling_times, input_values) -> (sampling_times, output_values)
-
-but how to pass changing parameters? every timestep there could be new params... but different filters have different numbers of parameters... so channels are not the way
--> this is also solved by having access to ts, because paramset can be sampled with ts. 
-
-TODO:
 - ability to plug window into any output
 - visual knob/slider indicators which move when using mouse/kb to adjust parameters. should show hi/low/current
 

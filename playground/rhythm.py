@@ -3,7 +3,7 @@ import functools
 import operator
 
 from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, plot_module, StepSequencing, NoiseSource, Constant
+    SAMPLING_FREQUENCY, NoiseSource, Constant
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -364,6 +364,3 @@ class NewDrumTest(Module):
                       }
         self.out = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)
 
-
-if __name__ == "__main__":
-    plot_module(Drummin, plot=(".*",), num_steps=10)

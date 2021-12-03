@@ -24,9 +24,11 @@ import sounddevice as sd
 
 from playground import filewatcher
 from playground import midi_lib
-from playground import live_graph_modern_gl as window_lib
+
+from playground import window_lib
 from playground import modules
 from playground import rhythm
+
 
 # Can contain:
 # - KeyAndMouseEvent
