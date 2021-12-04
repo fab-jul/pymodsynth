@@ -10,6 +10,9 @@ https://github.com/moderngl/moderngl-window
 
 import argparse
 import collections
+import datetime
+import getpass
+import queue
 import re
 import dataclasses
 import importlib
@@ -21,7 +24,9 @@ import time
 import typing
 
 import numpy as np
+import scipy.io.wavfile
 import sounddevice as sd
+import soundfile as sf
 
 from playground import filewatcher
 from playground import midi_lib
@@ -69,17 +74,72 @@ def _get_path_of_module(name):
     return os.path.join(current_dir, name)
 
 
+DURATION_FIVE_MIN = 5 * 60
+
+
+class Recorder:
+
+    def __init__(self,
+                 frames_per_second: int,
+                 sample_rate: int,
+                 max_recording_time_s: int = DURATION_FIVE_MIN):
+        self._is_recording = False
+        self._sample_rate = sample_rate
+
+        self._current_file_name = None
+
+        num_frames_to_record = max_recording_time_s * frames_per_second
+        print(f"Storing at most {num_frames_to_record} frames for recorder.")
+        self._buffer = collections.deque(maxlen=num_frames_to_record)
+
+    @staticmethod
+    def _get_audio_out_dir(root="audio_out"):
+        root_for_user = os.path.join(root, getpass.getuser())
+        os.makedirs(root_for_user, exist_ok=True)
+        return root_for_user
+
+    @staticmethod
+    def _file_name():
+        now_as_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        audio_out_filename = os.path.join(Recorder._get_audio_out_dir(), now_as_str + ".wav")
+        return audio_out_filename
+
+    def toggle_is_recording(self) -> bool:
+        self._is_recording = not self._is_recording
+        if self._is_recording:
+            self._current_file_name = self._file_name()
+        else:
+            self.write_out()
+        return self._is_recording
+
+    def push(self, outdata: np.ndarray):
+        if self._is_recording:
+            if self._buffer is None:
+                raise ValueError("Need to call setup() before push()!")
+            self._buffer.append(outdata.copy())
+            print("Buffer has", len(self._buffer), "els")
+
+    def write_out(self):
+        print(f"Saving to {self._current_file_name}...")
+        # TODO: Figure out why the heck divide by 2.
+        sig = np.concatenate(self._buffer, axis=0)[:, 0] / 2
+        normalize_sig = np.clip(sig, -1, 1)
+        scipy.io.wavfile.write(self._current_file_name, self._sample_rate, normalize_sig)
+
+
+
 class SynthesizerController:
 
     def __init__(self,
                  modules_file_name: str, output_gen_class: str, sample_rate, num_samples, num_channels,
-                 signal_window: window_lib.SignalWindow):
+                 signal_window: window_lib.SignalWindow, recorder: Recorder):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
         self.clock = modules.Clock(num_samples, num_channels, sample_rate)
         self.last_t = time.time()
         self.signal_window = signal_window
+        self.recorder = recorder
 
         # Set defaults.
         self.params: typing.Dict[str, modules.Parameter] = {}
@@ -261,13 +321,19 @@ class SynthesizerController:
                 param: modules.Parameter = self.knob_mapping[knob]
                 param.set_relative(rel_value)
 
+            elif isinstance(event, window_lib.RecordKeyPressedEvent):
+                is_recording = self.recorder.toggle_is_recording()
+                print("Recording:", is_recording)
+
             else:
                 raise TypeError(event)
 
         self.signal_window.set_signal(outdata)
+        self.recorder.push(outdata)
 
 
-def start_sound(modules_file_name: str, output_gen_class: str, device: int):
+
+def start_sound(modules_file_name: str, output_gen_class: str, device: int, record_max_minutes: int):
     if device < 0:
         device = None  # Auto-select.
     sample_rate = sd.query_devices(device, 'output')['default_samplerate']
@@ -275,6 +341,11 @@ def start_sound(modules_file_name: str, output_gen_class: str, device: int):
     # TODO(fab-jul): Investigate how large we can make this.
     num_samples = 2048
     num_channels = 1
+
+    # TODO: document that we record when we press `0`.
+    recorder = Recorder(frames_per_second=round(sample_rate / num_samples),
+                        sample_rate=round(sample_rate),
+                        max_recording_time_s=record_max_minutes * 60)
 
     window, timer, signal_window = window_lib.prepare_window(
         EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
@@ -285,9 +356,11 @@ def start_sound(modules_file_name: str, output_gen_class: str, device: int):
         sample_rate=sample_rate,
         num_channels=num_channels,
         num_samples=num_samples,
-        signal_window=signal_window)
+        signal_window=signal_window,
+        recorder=recorder)
 
     # Start audio stream.
+
     with sd.OutputStream(
             device=device,
             blocksize=num_samples,
@@ -322,9 +395,10 @@ def main():
     parser.add_argument(
         '-d', '--device', type=int, default=-1,
         help='output device (numeric ID or substring)')
+    parser.add_argument("--record_max_minutes", type=int, default=5)
     args = parser.parse_args(remaining)
 
-    start_sound(args.modules_file_name, args.output_gen_class, args.device)
+    start_sound(args.modules_file_name, args.output_gen_class, args.device, args.record_max_minutes)
 
 
 if __name__ == "__main__":

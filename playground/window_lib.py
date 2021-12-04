@@ -18,6 +18,10 @@ class KeyAndMouseEvent(typing.NamedTuple):
     shift_is_on: bool
 
 
+class RecordKeyPressedEvent:
+    pass
+
+
 class SignalWindow(mglw.WindowConfig):
     gl_version = (3, 3)
 
@@ -49,13 +53,35 @@ class SignalWindow(mglw.WindowConfig):
         # Shape: (num_samples, 5), where the signal lives at [:, 1].
         self.vertices = np.stack((x, np.zeros_like(x), r, g, b), axis=-1)
 
+        self.record_key = self._ascii_to_key("0")
+
     def set_signal(self, signal):
         self._signal[:] = signal
 
+    def _ascii_to_key(self, key_as_ascii: str):
+        all_keys = vars(self.wnd.keys)
+        if key_as_ascii.isdigit():
+            return all_keys["NUMBER_" + key_as_ascii]
+
+        try:
+            return all_keys[key_as_ascii.upper()]
+        except KeyError:
+            pass
+
+        manual_assignements = {
+            "/": self.wnd.keys.SLASH,
+            # TODO: Add more if needed.
+        }
+        if key_as_ascii in manual_assignements:
+            return manual_assignements[key_as_ascii]
+        raise ValueError(f"Invalid key: {key_as_ascii}")
+
     def set_interesting_keys(self, keys_as_ascii: typing.Iterable[str]):
-        self._interesting_keys = {vars(self.wnd.keys)[k.upper()]: k for k in keys_as_ascii}
+        self._interesting_keys = {self._ascii_to_key(k): k for k in keys_as_ascii}
 
     def key_event(self, key, action, modifiers):
+        if key == self.record_key and action == self.wnd.keys.ACTION_RELEASE:
+            self._event_queue.append(RecordKeyPressedEvent())
         if key not in self._interesting_keys:
             return
         # Key presses
