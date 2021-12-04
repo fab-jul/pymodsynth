@@ -477,8 +477,8 @@ class NewDrumTest(Module):
 
         percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
-        note_track = TrackConfig(pattern=Pattern(random.choices([0, 1, 3, 7, 12, 14, 18, 25], k=4), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
-                                                 random.choices([1/4, 1/8, 3/8, 1/16, 3/16], k=4)),
+        note_track = TrackConfig(pattern=Pattern(random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
+                                                 random.choices([1/4, 1/8, 3/8, 1/16, 3/16, 1/32, 3/32, 1/64, 3/64, 1/128, 3/128], k=8)),
                                                 envelope_gen=None,
                                                 post=None
                                                 )
