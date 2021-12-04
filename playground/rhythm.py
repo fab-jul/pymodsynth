@@ -186,10 +186,12 @@ class ADSREnvelopeGen(EnvelopeGen):
 #######################################################################################################
 
 
-class Pattern(NamedTuple):
+@dataclasses.dataclass
+class Pattern:
     """Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)"""
-    pattern: List[int]
+    pattern: List[float]
     note_values: float
+    note_lengths: List[float] = None  # not used by percussion instruments
 
 
 class TrackConfig(NamedTuple):
@@ -203,12 +205,15 @@ class TrackConfig(NamedTuple):
 
 
 class TriggerSource(Module):
-    """Take patterns and bpm and acts as a source of a single trigger track."""
+    """Take patterns and bpm and acts as a source of a single trigger track.
+    Set use_values to true if you don't just want ones in the output
+    """
 
-    def __init__(self, bpm: Module, pattern: Pattern):
+    def __init__(self, bpm: Module, pattern: Pattern, use_values=False):
         super().__init__()
         self.bpm = bpm
         self.pattern = pattern
+        self.use_values = use_values
 
     @staticmethod
     def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
@@ -224,7 +229,14 @@ class TriggerSource(Module):
             [np.array(spaced_trigger_indices) + (i * trigger_pattern_length) for i in range(reps + 1)])
         trigger_frames = np.array(list(filter(lambda x: offset <= x < offset + frame_len, trigger_frames)))
         trigger_frames = trigger_frames - offset
-        return trigger_frames.astype(int)
+
+        # also return rotated pattern:
+        pos_in_trigger_frame = clock_signal.sample_indices[0] % trigger_pattern_length
+        percentage_in_trigger_frame = pos_in_trigger_frame/trigger_pattern_length
+        index = int(np.round(percentage_in_trigger_frame * len(pattern)))
+        rot_pat = np.roll(pattern, -index)
+        #print("rot_pat", rot_pat)
+        return trigger_frames.astype(int), rot_pat
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         bpm = np.mean(self.bpm(clock_signal))
@@ -232,10 +244,17 @@ class TriggerSource(Module):
         if samples_per_beat < 2.0:
             print("Warning: Cannot deal with samples_per_beat < 2")  # TODO: but should!
             samples_per_beat = 2.0
-        trigger_indices = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat, self.pattern.pattern,
+        trigger_indices, rotated_pattern = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat, self.pattern.pattern,
                                                                    self.pattern.note_values)
         trigger_signal = clock_signal.zeros()
-        trigger_signal[trigger_indices] = 1.0
+        if not self.use_values:
+            trigger_signal[trigger_indices] = 1.0
+        else:
+            reps = int(np.ceil(len(trigger_indices) / len(rotated_pattern)))
+            repeated = np.tile(rotated_pattern, reps)
+            if len(trigger_indices) > 0:
+                print("repeated", repeated)
+                trigger_signal[trigger_indices] = repeated[:len(trigger_indices)]
         return trigger_signal
 
 
@@ -303,6 +322,70 @@ class Track(Module):
         self.out = self.post(self.trigger_modulator)
 
 
+# need: source that produces tone until trigger. the note will switch to the given frequency.
+# single notes possible, but also chords
+# pattern notation: 0: no tone, 1: base tone, and then rt(2,12)**higher, so that 12 is an octave higher than 1.
+# note pattern: [1, 3, 1, 4, 1, 4, 3, 1], 1/8
+# note lengths: by default [1/8]*8, but multiplied by parameter, and can pass so that not all are equal
+#
+# so: make an envelope_gen that 1. makes correct length, and 2. the correct tones.
+#
+
+# need step signal which takes indices and values and when index is reached, it takes value=values[index]
+# as input to frequency of a SineSource
+#
+
+class Hold(Module):
+    """A trigger has a value, and the output is a step signal where after after trigger1, the value of the signal is
+    the value of trigger1 and so on.."""
+    def __init__(self, inp: Module):
+        self.inp = inp
+        self.previous_value = 0.0
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        inp = self.inp(clock_signal)
+        # add first trigger if not already present
+        if inp[0] == 0.0:
+            first_val = np.ones((1, clock_signal.shape[1])) * self.previous_value
+            values = np.concatenate((first_val, inp))
+            first_slice_index = np.ones((1, clock_signal.shape[1]))
+            slice_indices = np.nonzero((np.concatenate((first_slice_index, inp))))[0]
+        else:
+            values = inp
+            slice_indices = np.nonzero(inp)[0]
+        if len(slice_indices) > 0:
+            self.previous_value = values[slice_indices[-1]][0]
+            # add last index if not already present
+            if slice_indices[-1] != clock_signal.num_samples:
+                slice_indices = np.append(slice_indices, clock_signal.num_samples)
+            # create chunks and concat
+            chunks = []
+            for i, index in enumerate(slice_indices[:-1]):
+                chunks.append(np.ones((slice_indices[i+1] - index)) * values[index, :])
+            out = np.concatenate(chunks)
+        else:
+            out = np.zeros_like(clock_signal.ts)
+        print(out)
+        return out.reshape(clock_signal.shape)
+
+
+class HoldTest(Module):
+    def __init__(self):
+        pattern = Pattern(pattern=[1, 7, 5, 0], note_values=1/4, note_lengths=[1/8, 1/8, 1/4, 1/8])
+        self.trigger_src = TriggerSource(Parameter(120, key="b"), pattern, use_values=True)
+        self.hold = Hold(self.trigger_src)
+        self.out = SineSource(frequency=self.hold * 220)
+
+
+class InstrumentTrack(Module):
+    def __init__(self, bpm: Module, config: TrackConfig):
+        # split config.Pattern into pattern and note values, and get the note lengths too. the pattern will be passed
+        # to Track(...), but the note values and lengths go to the envelope generator, which is injected to Track too
+        note_lengths = config.pattern.note_lengths if config.pattern.note_lengths is not None else [config.pattern.note_values] * len(config.pattern.pattern)
+
+
+
+
 """
     Parametrize with trigger patterns for different tracks (kick, snare, hihat, ...).
     Trigger patterns go over any number of bars and repeat forever.
@@ -324,7 +407,6 @@ class Track(Module):
     Every track has its own envelope generator and a postprocessor wavefunction to control the pitch.
 """
 
-
 class DrumMachine(Module):
     def __init__(self, bpm: Module, track_cfg_dict: Dict[str, TrackConfig]):
         self.bpm = bpm
@@ -343,7 +425,7 @@ class NewDrumTest(Module):
                                           envelope_gen=kick_env,
                                           post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
                                           ),
-                      "snare": TrackConfig(pattern=Pattern([0, 0, 0, 1, 0, 0, 1, 0], 1 / 8),
+                      "snare": TrackConfig(pattern=Pattern([0, 0, 0, 1, 0, 0, 1, 0], 1 / 4),
                                           envelope_gen=snare_env,
                                           post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
                                           ),
