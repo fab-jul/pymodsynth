@@ -9,6 +9,7 @@ import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
 
 import matplotlib.pyplot as plt
+
 P = Parameter
 
 
@@ -96,6 +97,8 @@ class EnvelopeSource(Module):
 
 def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     """Produce num_samples samples of func between [0, curvature], but squished into [0,1]"""
+    num_samples = int(num_samples)
+    print(func, num_samples, curvature, start_val, end_val)
     xs = func(np.linspace(0, curvature, num_samples))
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
@@ -158,6 +161,7 @@ class RectangleEnvelopeGen(EnvelopeGen):
 
 class ADSREnvelopeGen(EnvelopeGen):
     """Borrowed from modules.py. Equivalent to a sum of FuncEnvelopeGens."""
+
     # TODO: rewrite as FuncEnvelopeGen concatenation
     def __init__(self, attack: Module, decay: Module, sustain: Module, release: Module, hold: Module):
         self.attack = attack
@@ -182,6 +186,7 @@ class ADSREnvelopeGen(EnvelopeGen):
             envelope = np.concatenate((attack, decay, hold, release), 0)
             res.append(envelope)
         return res
+
 
 #######################################################################################################
 
@@ -232,10 +237,10 @@ class TriggerSource(Module):
 
         # also return rotated pattern:
         pos_in_trigger_frame = clock_signal.sample_indices[0] % trigger_pattern_length
-        percentage_in_trigger_frame = pos_in_trigger_frame/trigger_pattern_length
+        percentage_in_trigger_frame = pos_in_trigger_frame / trigger_pattern_length
         index = int(np.round(percentage_in_trigger_frame * len(pattern)))
         rot_pat = np.roll(pattern, -index)
-        #print("rot_pat", rot_pat)
+        # print("rot_pat", rot_pat)
         return trigger_frames.astype(int), rot_pat
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
@@ -244,8 +249,9 @@ class TriggerSource(Module):
         if samples_per_beat < 2.0:
             print("Warning: Cannot deal with samples_per_beat < 2")  # TODO: but should!
             samples_per_beat = 2.0
-        trigger_indices, rotated_pattern = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat, self.pattern.pattern,
-                                                                   self.pattern.note_values)
+        trigger_indices, rotated_pattern = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat,
+                                                                                    self.pattern.pattern,
+                                                                                    self.pattern.note_values)
         trigger_signal = clock_signal.zeros()
         if not self.use_values:
             trigger_signal[trigger_indices] = 1.0
@@ -265,6 +271,7 @@ class TriggerModulator(Module):
     Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
     Combine overlaps with a suitable function: max, fst, snd, add, ...
     """
+
     def __init__(self, trigger_signal: TriggerSource, envelope_gen: EnvelopeGen, combinator=np.add):
         super().__init__()
         self.previous = None
@@ -317,7 +324,8 @@ class Track(Module):
         self.post = config.post  # by default, the identity Module -> no effect
 
         self.trigger_source = TriggerSource(self.bpm, self.pattern)
-        self.trigger_modulator = TriggerModulator(trigger_signal=self.trigger_source, envelope_gen=self.env_gen, combinator=self.combinator)
+        self.trigger_modulator = TriggerModulator(trigger_signal=self.trigger_source, envelope_gen=self.env_gen,
+                                                  combinator=self.combinator)
         # TODO: this self.post stuff is a bit questionable.. having lambda m: X(m) as args...
         self.out = self.post(self.trigger_modulator)
 
@@ -338,6 +346,7 @@ class Track(Module):
 class Hold(Module):
     """A trigger has a value, and the output is a step signal where after after trigger1, the value of the signal is
     the value of trigger1 and so on.."""
+
     def __init__(self, inp: Module):
         self.inp = inp
         self.previous_value = 0.0
@@ -361,7 +370,7 @@ class Hold(Module):
             # create chunks and concat
             chunks = []
             for i, index in enumerate(slice_indices[:-1]):
-                chunks.append(np.ones((slice_indices[i+1] - index)) * values[index, :])
+                chunks.append(np.ones((slice_indices[i + 1] - index)) * values[index, :])
             out = np.concatenate(chunks)
         else:
             out = np.zeros_like(clock_signal.ts)
@@ -371,19 +380,40 @@ class Hold(Module):
 
 class HoldTest(Module):
     def __init__(self):
-        pattern = Pattern(pattern=[1, 7, 5, 0], note_values=1/4, note_lengths=[1/8, 1/8, 1/4, 1/8])
+        pattern = Pattern(pattern=[1, 2, 3, 0], note_values=1 / 4, note_lengths=[1 / 8, 1 / 8, 1 / 4, 1 / 8])
         self.trigger_src = TriggerSource(Parameter(120, key="b"), pattern, use_values=True)
         self.hold = Hold(self.trigger_src)
-        self.out = SineSource(frequency=self.hold * 220)
+        self.out = SineSource(frequency=self.hold * 110)
 
 
 class InstrumentTrack(Module):
+    """If envelope_gen in config is None, create a window env gen with length note_lengths. Otherwise, use the given"""
+
     def __init__(self, bpm: Module, config: TrackConfig):
         # split config.Pattern into pattern and note values, and get the note lengths too. the pattern will be passed
         # to Track(...), but the note values and lengths go to the envelope generator, which is injected to Track too
-        note_lengths = config.pattern.note_lengths if config.pattern.note_lengths is not None else [config.pattern.note_values] * len(config.pattern.pattern)
 
+        samples_per_bar = SAMPLING_FREQUENCY / (bpm / 60) * 4
 
+        if config.envelope_gen is None:
+            note_lengths = config.pattern.note_lengths if config.pattern.note_lengths is not None \
+                else [config.pattern.note_values] * len(config.pattern.pattern)
+            note_len_vals = 1.0 / len(note_lengths)
+            env_gen = FuncEnvelopeGen(func=lambda t: t,
+                                      length=samples_per_bar * Hold(TriggerSource(bpm=bpm,
+                                                                                      pattern=Pattern(note_lengths, note_len_vals),
+                                                                                      use_values=True)),
+                                      curvature=Constant(1),
+                                      start_val=Constant(1),
+                                      end_val=Constant(1))
+        else:
+            env_gen = config.envelope_gen
+        # envelope gens need a certain length, but are otherwise rectangular windows... for now. later: attack TODO
+        # posts
+        # need note values to make carrier
+        carrier = SineSource(frequency=110*Hold(TriggerSource(bpm=bpm, pattern=config.pattern, use_values=True)))
+        post = lambda m: m * carrier
+        self.out = Track(bpm=bpm, config=TrackConfig(pattern=config.pattern, envelope_gen=env_gen, post=post))
 
 
 """
@@ -407,6 +437,7 @@ class InstrumentTrack(Module):
     Every track has its own envelope generator and a postprocessor wavefunction to control the pitch.
 """
 
+
 class DrumMachine(Module):
     def __init__(self, bpm: Module, track_cfg_dict: Dict[str, TrackConfig]):
         self.bpm = bpm
@@ -416,23 +447,38 @@ class DrumMachine(Module):
 
 class NewDrumTest(Module):
     def __init__(self):
-
-        kick_env = FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | FuncEnvelopeGen(func=np.exp, length=P(1000), curvature=P(2), start_val=Constant(1), end_val=Constant(0))
-        snare_env = ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30), decay_curvature=P(3)) | ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5), decay_length=P(500), decay_curvature=P(1000))
-        hihat_env = ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800), decay_curvature=P(200)) * 0.5
+        kick_env = FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | FuncEnvelopeGen(func=np.exp,
+                                                                                                 length=P(1000),
+                                                                                                 curvature=P(2),
+                                                                                                 start_val=Constant(1),
+                                                                                                 end_val=Constant(0))
+        snare_env = ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
+                                   decay_curvature=P(3)) | ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5),
+                                                                          decay_length=P(500), decay_curvature=P(1000))
+        hihat_env = ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
+                                   decay_curvature=P(200)) * 0.5
 
         track_dict = {"kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0], 1 / 8),
                                           envelope_gen=kick_env,
                                           post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
                                           ),
                       "snare": TrackConfig(pattern=Pattern([0, 0, 0, 1, 0, 0, 1, 0], 1 / 4),
-                                          envelope_gen=snare_env,
-                                          post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
-                                          ),
+                                           envelope_gen=snare_env,
+                                           post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
+                                           ),
                       "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1], 1 / 8),
                                            envelope_gen=hihat_env,
                                            post=lambda m: m * NoiseSource()
                                            ),
                       }
-        self.out = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)
 
+        percussion = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)
+
+        note_track = TrackConfig(pattern=Pattern([1, 3, 2, 5], 1 / 4),
+                                                envelope_gen=None,
+                                                post=None
+                                                )
+
+        instruments = InstrumentTrack(bpm=Parameter(120, key='b'), config=note_track)
+
+        self.out = percussion + instruments
