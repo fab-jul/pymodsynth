@@ -53,4 +53,3 @@ def test_synthesizer_controller(num_samples, num_channels, time_stamps, basic_mo
     outdata = np.empty((num_samples, num_channels), modules.OUT_DTYPE)
     synthesizer_controller.callback(
         outdata, num_samples=2048, timestamps=time_stamps, status=None)
-
