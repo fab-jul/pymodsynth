@@ -3,7 +3,7 @@ import functools
 import operator
 
 from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, NoiseSource, Constant
+    SAMPLING_FREQUENCY, NoiseSource, Constant, Id
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -77,7 +77,7 @@ class EnvelopeSource(Module):
         self.sign_exponent = 0  # TODO: later haha
 
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
-        env = self.envelope_gen(clock_signal, [0])[0]  # get a single envelope, and unpack it from list
+        env = self.envelope_gen(clock_signal, [0])[0]  # get a single envelope, and unpack from list TODO: why not [1]?
         start = clock_signal.sample_indices[0] % len(env)
         signal = env
         while len(signal) < len(clock_signal.ts):
@@ -187,7 +187,7 @@ class ADSREnvelopeGen(EnvelopeGen):
 
 
 class Pattern(NamedTuple):
-    """Input to TriggerSource"""
+    """Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)"""
     pattern: List[int]
     note_values: float
 
@@ -196,8 +196,10 @@ class TrackConfig(NamedTuple):
     """Input to Track"""
     pattern: Pattern
     envelope_gen: EnvelopeGen
-    carrier: Module
-    combinator: Callable = np.add
+    # when an envelope is not enough: modulate to carrier, filter, add noise, ...
+    # must have type Module -> Module
+    post: Callable[[Module], Module] = lambda m: Id(m)
+    combinator: Callable = np.add  # a property of the "instrument": how to combine overlapping notes?
 
 
 class TriggerSource(Module):
@@ -210,7 +212,7 @@ class TriggerSource(Module):
 
     @staticmethod
     def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
-        frame_len = len(clock_signal.sample_indices)
+        frame_len = clock_signal.num_samples
         samples_per_note = round(samples_per_beat * note_value * 4)
         spaced_trigger_indices = np.nonzero(pattern)[0] * samples_per_note
         trigger_pattern_length = len(pattern) * samples_per_note
@@ -227,13 +229,14 @@ class TriggerSource(Module):
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         bpm = np.mean(self.bpm(clock_signal))
         samples_per_beat = SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
-        if samples_per_beat < 2:
+        if samples_per_beat < 2.0:
             print("Warning: Cannot deal with samples_per_beat < 2")  # TODO: but should!
-            samples_per_beat = 2
+            samples_per_beat = 2.0
         trigger_indices = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat, self.pattern.pattern,
                                                                    self.pattern.note_values)
-        # TODO: Here, we violate the Module interface and return trigger _indices_ instead of the full signal.
-        return trigger_indices
+        trigger_signal = clock_signal.zeros()
+        trigger_signal[trigger_indices] = 1.0
+        return trigger_signal
 
 
 class TriggerModulator(Module):
@@ -243,26 +246,23 @@ class TriggerModulator(Module):
     Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
     Combine overlaps with a suitable function: max, fst, snd, add, ...
     """
-
-    # TODO: trigger_indices is a concrete Module of type TriggerSource, because only that returns indices instead of
-    #       a full frame! Discuss!
-    def __init__(self, trigger_indices: TriggerSource, envelope_gen: EnvelopeGen, combinator=np.add):
+    def __init__(self, trigger_signal: TriggerSource, envelope_gen: EnvelopeGen, combinator=np.add):
         super().__init__()
         self.previous = None
-        self.trigger_indices = trigger_indices
+        self.trigger_signal = trigger_signal
         self.env_gen = envelope_gen
         self.combinator = combinator
 
     def __call__(self, clock_signal: ClockSignal):
         """Generate one envelope per trigger"""
-        trigger_indices = self.trigger_indices(clock_signal)
+        trigger_indices = np.nonzero(self.trigger_signal(clock_signal))[0]
         envelopes = self.env_gen(clock_signal, desired_indices=trigger_indices)
-        current_signal = np.zeros(shape=clock_signal.ts.shape)
+        current_signal = clock_signal.zeros()
         previous_signal = self.previous if self.previous is not None and len(self.previous) > 0 else np.zeros(
             shape=clock_signal.ts.shape)
         if envelopes:
             # does any envelope go over frame border?
-            latest_envelope_end = max([i + len(env) for i, env in zip(trigger_indices, envelopes)])
+            latest_envelope_end = max(i + len(env) for i, env in zip(trigger_indices, envelopes))
             if latest_envelope_end > clock_signal.num_samples:
                 remainder = latest_envelope_end - clock_signal.num_samples
             else:
@@ -295,13 +295,12 @@ class Track(Module):
         self.pattern = config.pattern
         self.env_gen = config.envelope_gen
         self.combinator = config.combinator
-        self.carrier = config.carrier  # by default, the identity Module -> no effect
+        self.post = config.post  # by default, the identity Module -> no effect
 
         self.trigger_source = TriggerSource(self.bpm, self.pattern)
-        self.trigger_modulator = TriggerModulator(trigger_indices=self.trigger_source, envelope_gen=self.env_gen,
-                                                  combinator=self.combinator)
-
-        self.out = self.carrier * self.trigger_modulator
+        self.trigger_modulator = TriggerModulator(trigger_signal=self.trigger_source, envelope_gen=self.env_gen, combinator=self.combinator)
+        # TODO: this self.post stuff is a bit questionable.. having lambda m: X(m) as args...
+        self.out = self.post(self.trigger_modulator)
 
 
 """
@@ -322,7 +321,7 @@ class Track(Module):
                     Downside: How to do offbeats, or other patterns that don't start at 1?
         ...?
     Currently supported: Direct with note_value, see OldTrack class.
-    Every track has its own envelope generator and a carrier wavefunction to control the pitch.
+    Every track has its own envelope generator and a postprocessor wavefunction to control the pitch.
 """
 
 
@@ -342,15 +341,15 @@ class NewDrumTest(Module):
 
         track_dict = {"kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0], 1 / 8),
                                           envelope_gen=kick_env,
-                                          carrier=TriangleSource(frequency=P(60)) + NoiseSource() * 0.05
+                                          post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
                                           ),
                       "snare": TrackConfig(pattern=Pattern([0, 0, 0, 1, 0, 0, 1, 0], 1 / 8),
                                           envelope_gen=snare_env,
-                                          carrier=TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6
+                                          post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
                                           ),
                       "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1], 1 / 8),
                                            envelope_gen=hihat_env,
-                                           carrier=NoiseSource()
+                                           post=lambda m: m * NoiseSource()
                                            ),
                       }
         self.out = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)

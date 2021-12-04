@@ -422,6 +422,9 @@ class Parameter(Constant):
         self.shift_multiplier = shift_multiplier
         self.clip = clip
 
+    def __repr__(self):
+        return f"Parameter({self.value},{self.knob})"
+
     def set(self, value):
         if self.clip:
             self.value = np.clip(value, self.lo, self.hi)
@@ -530,7 +533,7 @@ class SineModulator(Module):
         super().__init__()
         self.carrier = SineSource(carrier_frequency, amplitude=inner_amplitude)
         self.inp = inp
-        # self.out = MultiplierModule(self.carrier, inp) # TODO: consider multiplier module for nice composition
+        # self.out = MultiplierModule(self.postprocessor, inp) # TODO: consider multiplier module for nice composition
 
     def out(self, clock_signal: ClockSignal):
         out = self.carrier(clock_signal) * self.inp(clock_signal)
