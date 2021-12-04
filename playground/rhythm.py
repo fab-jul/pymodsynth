@@ -98,7 +98,7 @@ class EnvelopeSource(Module):
 def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     """Produce num_samples samples of func between [0, curvature], but squished into [0,1]"""
     num_samples = int(num_samples)
-    #print(func, num_samples, curvature, start_val, end_val)
+    # print(func, num_samples, curvature, start_val, end_val)
     xs = func(np.linspace(0, curvature, num_samples))
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
@@ -399,8 +399,9 @@ class InstrumentTrack(Module):
             note_len_vals = 1.0 / len(note_lengths)
             env_gen = FuncEnvelopeGen(func=lambda t: t,
                                       length=samples_per_bar * Hold(TriggerSource(bpm=bpm,
-                                                                                      pattern=Pattern(note_lengths, note_len_vals),
-                                                                                      use_values=True)),
+                                                                                  pattern=Pattern(note_lengths,
+                                                                                                  note_len_vals),
+                                                                                  use_values=True)),
                                       curvature=Constant(1),
                                       start_val=Constant(1),
                                       end_val=Constant(1))
@@ -411,7 +412,7 @@ class InstrumentTrack(Module):
         # need note values to make carrier
         notes = [FreqFactors.STEP.value ** n for n in config.pattern.pattern]
         notes_pattern = Pattern(pattern=notes, note_values=config.pattern.note_values)
-        carrier = TriangleSource(frequency=220*Hold(TriggerSource(bpm=bpm, pattern=notes_pattern, use_values=True)))
+        carrier = TriangleSource(frequency=220 * Hold(TriggerSource(bpm=bpm, pattern=notes_pattern, use_values=True)))
         post = lambda m: m * carrier
         self.out = Track(bpm=bpm, config=TrackConfig(pattern=config.pattern, envelope_gen=env_gen, post=post))
 
@@ -447,42 +448,54 @@ class DrumMachine(Module):
 
 class NewDrumTest(Module):
     def __init__(self):
-
         bpm = Parameter(120, key='b')
 
-        kick_env = FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | FuncEnvelopeGen(func=np.exp,
-                                                                                                 length=P(1000),
-                                                                                                 curvature=P(2),
-                                                                                                 start_val=Constant(1),
-                                                                                                 end_val=Constant(0))
+        kick_env = FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | \
+                   FuncEnvelopeGen(func=np.exp, length=P(1000), curvature=P(2), start_val=Constant(1),
+                                   end_val=Constant(0))
         snare_env = ExpEnvelopeGen(attack_length=P(200), attack_curvature=P(10), decay_length=P(30),
-                                   decay_curvature=P(3)) | ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5),
-                                                                          decay_length=P(500), decay_curvature=P(1000))
+                                   decay_curvature=P(3)) | \
+                    ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5), decay_length=P(500),
+                                   decay_curvature=P(1000))
         hihat_env = ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
                                    decay_curvature=P(200)) * 0.6
 
-        track_dict = {"kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0]*4 + [1, 0, 1, 0, 1, 1, 1, 1], 1 / 8),
-                                          envelope_gen=kick_env,
-                                          post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
-                                          ),
-                      "snare": TrackConfig(pattern=Pattern([0, 0, 1, 0, 0, 0, 1, 1]*4 + [1, 0, 1, 0, 1, 0, 1, 1], 1 / 8),
-                                           envelope_gen=snare_env,
-                                           post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
-                                           ),
-                      "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1]*3 + [1, 1, 1, 1, 1, 1, 1, 1]*2, 1 / 8),
-                                           envelope_gen=hihat_env,
-                                           post=lambda m: m * NoiseSource()
-                                           ),
-                      }
+        track_dict = {
+            "kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0] * 4 + [1, 0, 1, 0, 1, 1, 1, 1], 1 / 8),
+                                envelope_gen=kick_env,
+                                post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
+                                ),
+            "snare": TrackConfig(pattern=Pattern([0, 0, 1, 0, 0, 0, 1, 1] * 4 + [1, 0, 1, 0, 1, 0, 1, 1], 1 / 8),
+                                 envelope_gen=snare_env,
+                                 post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
+                                 ),
+            "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1] * 3 + [1, 1, 1, 1, 1, 1, 1, 1] * 2, 1 / 8),
+                                 envelope_gen=hihat_env,
+                                 post=lambda m: m * NoiseSource()
+                                 ),
+        }
 
         percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
-        note_track = TrackConfig(pattern=Pattern(random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
-                                                 random.choices([1/4, 1/8, 3/8, 1/16, 3/16, 1/32, 3/32, 1/64, 3/64, 1/128, 3/128], k=8)),
-                                                envelope_gen=None,
-                                                post=None
-                                                )
+        note_track = TrackConfig(pattern=Pattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
+                                                 note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
+                                                 note_lengths=random.choices(
+                                                     [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64,
+                                                      3 / 64, 1 / 128, 3 / 128], k=8)),
+                                 envelope_gen=None,
+                                 post=None
+                                 )
 
-        instruments = InstrumentTrack(bpm=bpm, config=note_track)
+        instruments1 = InstrumentTrack(bpm=bpm, config=note_track)
 
-        self.out = percussion + instruments * 0.1
+        note_track2 = TrackConfig(pattern=Pattern(pattern=random.choices([0, 0.1, 0.3, 0.7, 1.2, 1.4, 1.8, 2.4], k=8),
+                                                 note_values=random.choice([1/2, 1 / 4, 3 / 4, 3 / 8]),
+                                                 note_lengths=random.choices(
+                                                     [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16], k=8)),
+                                 envelope_gen=None,
+                                 post=None
+                                 )
+
+        instruments2 = InstrumentTrack(bpm=bpm, config=note_track2)
+
+        self.out = percussion + instruments1 * 0.1 + instruments2 * 0.1
