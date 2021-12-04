@@ -3,7 +3,7 @@ import functools
 import operator
 
 from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, NoiseSource, Constant, Id
+    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -98,7 +98,7 @@ class EnvelopeSource(Module):
 def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     """Produce num_samples samples of func between [0, curvature], but squished into [0,1]"""
     num_samples = int(num_samples)
-    print(func, num_samples, curvature, start_val, end_val)
+    #print(func, num_samples, curvature, start_val, end_val)
     xs = func(np.linspace(0, curvature, num_samples))
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
@@ -259,7 +259,6 @@ class TriggerSource(Module):
             reps = int(np.ceil(len(trigger_indices) / len(rotated_pattern)))
             repeated = np.tile(rotated_pattern, reps)
             if len(trigger_indices) > 0:
-                print("repeated", repeated)
                 trigger_signal[trigger_indices] = repeated[:len(trigger_indices)]
         return trigger_signal
 
@@ -374,7 +373,6 @@ class Hold(Module):
             out = np.concatenate(chunks)
         else:
             out = np.zeros_like(clock_signal.ts)
-        print(out)
         return out.reshape(clock_signal.shape)
 
 
@@ -411,7 +409,9 @@ class InstrumentTrack(Module):
         # envelope gens need a certain length, but are otherwise rectangular windows... for now. later: attack TODO
         # posts
         # need note values to make carrier
-        carrier = SineSource(frequency=110*Hold(TriggerSource(bpm=bpm, pattern=config.pattern, use_values=True)))
+        notes = [FreqFactors.STEP.value ** n for n in config.pattern.pattern]
+        notes_pattern = Pattern(pattern=notes, note_values=config.pattern.note_values)
+        carrier = TriangleSource(frequency=220*Hold(TriggerSource(bpm=bpm, pattern=notes_pattern, use_values=True)))
         post = lambda m: m * carrier
         self.out = Track(bpm=bpm, config=TrackConfig(pattern=config.pattern, envelope_gen=env_gen, post=post))
 
@@ -447,6 +447,9 @@ class DrumMachine(Module):
 
 class NewDrumTest(Module):
     def __init__(self):
+
+        bpm = Parameter(120, key='b')
+
         kick_env = FuncEnvelopeGen(func=np.exp, length=P(100), curvature=P(3)) | FuncEnvelopeGen(func=np.exp,
                                                                                                  length=P(1000),
                                                                                                  curvature=P(2),
@@ -472,13 +475,14 @@ class NewDrumTest(Module):
                                            ),
                       }
 
-        percussion = DrumMachine(bpm=Parameter(120, key='b'), track_cfg_dict=track_dict)
+        percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
-        note_track = TrackConfig(pattern=Pattern([1, 3, 2, 5], 1 / 4),
+        note_track = TrackConfig(pattern=Pattern(random.choices(range(0, 25), k=4), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
+                                                 random.choices([1/4, 1/8, 3/8, 1/16, 3/16], k=4)),
                                                 envelope_gen=None,
                                                 post=None
                                                 )
 
-        instruments = InstrumentTrack(bpm=Parameter(120, key='b'), config=note_track)
+        instruments = InstrumentTrack(bpm=bpm, config=note_track)
 
-        self.out = percussion + instruments
+        self.out = percussion + instruments * 0.2
