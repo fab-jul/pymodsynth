@@ -459,17 +459,17 @@ class NewDrumTest(Module):
                                    decay_curvature=P(3)) | ExpEnvelopeGen(attack_length=P(50), attack_curvature=P(5),
                                                                           decay_length=P(500), decay_curvature=P(1000))
         hihat_env = ExpEnvelopeGen(attack_length=P(400), attack_curvature=P(3), decay_length=P(800),
-                                   decay_curvature=P(200)) * 0.5
+                                   decay_curvature=P(200)) * 0.6
 
-        track_dict = {"kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0], 1 / 8),
+        track_dict = {"kick": TrackConfig(pattern=Pattern([1, 0, 1, 0, 1, 0, 1, 0]*4 + [1, 0, 1, 0, 1, 1, 1, 1], 1 / 8),
                                           envelope_gen=kick_env,
                                           post=lambda m: m * (TriangleSource(frequency=P(60)) + NoiseSource() * 0.05)
                                           ),
-                      "snare": TrackConfig(pattern=Pattern([0, 0, 0, 1, 0, 0, 1, 0], 1 / 4),
+                      "snare": TrackConfig(pattern=Pattern([0, 0, 1, 0, 0, 0, 1, 1]*4 + [1, 0, 1, 0, 1, 0, 1, 1], 1 / 8),
                                            envelope_gen=snare_env,
                                            post=lambda m: m * (TriangleSource(frequency=P(1000)) + NoiseSource() * 0.6)
                                            ),
-                      "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1], 1 / 8),
+                      "hihat": TrackConfig(pattern=Pattern([0, 1, 0, 1, 0, 1, 0, 1]*3 + [1, 1, 1, 1, 1, 1, 1, 1]*2, 1 / 8),
                                            envelope_gen=hihat_env,
                                            post=lambda m: m * NoiseSource()
                                            ),
@@ -477,7 +477,7 @@ class NewDrumTest(Module):
 
         percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
-        note_track = TrackConfig(pattern=Pattern(random.choices(range(0, 25), k=4), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
+        note_track = TrackConfig(pattern=Pattern(random.choices([0, 1, 3, 7, 12, 14, 18, 25], k=4), random.choice([1/4, 1/8, 3/8, 1/16, 3/16]),
                                                  random.choices([1/4, 1/8, 3/8, 1/16, 3/16], k=4)),
                                                 envelope_gen=None,
                                                 post=None
@@ -485,4 +485,4 @@ class NewDrumTest(Module):
 
         instruments = InstrumentTrack(bpm=bpm, config=note_track)
 
-        self.out = percussion + instruments * 0.2
+        self.out = percussion + instruments * 0.1
