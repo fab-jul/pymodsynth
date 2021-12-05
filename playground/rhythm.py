@@ -97,8 +97,7 @@ class EnvelopeSource(Module):
 
 def func_gen(func, num_samples, curvature, start_val=0, end_val=1):
     """Produce num_samples samples of func between [0, curvature], but squished into [0,1]"""
-    num_samples = int(num_samples)
-    # print(func, num_samples, curvature, start_val, end_val)
+    num_samples = max(1, int(num_samples))
     xs = func(np.linspace(0, curvature, num_samples))
     xs = (xs - xs[0]) / (np.max(xs) - xs[0])
     return xs * (end_val - start_val) + start_val
