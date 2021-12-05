@@ -164,6 +164,9 @@ class Module:
     def out_mean_int(self, clock_signal: ClockSignal) -> int:
         return round(np.mean(self.out(clock_signal)))
 
+    def out_mean_float(self, clock_signal: ClockSignal) -> float:
+        return np.mean(self.out(clock_signal))
+
     def out(self, clock_signal: ClockSignal) -> np.ndarray:
         raise Exception("not implemented")
 

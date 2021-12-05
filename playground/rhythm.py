@@ -1,9 +1,10 @@
 import dataclasses
 import functools
+import scipy.signal
 import operator
 
 from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors
+    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -515,3 +516,54 @@ class HoldTest(Module):
 
 
 
+@functools.lru_cache(maxsize=128)
+def basic_reverb_ir(delay, echo, p):
+    print("Making a reverb...")
+    # We give it `delay` samples of nothing, then a linspace down.
+    h = np.random.binomial(1, p, delay + echo) * np.concatenate(
+        (np.zeros(delay), np.linspace(.2, 0, echo)), axis=0)
+    h = h[:, np.newaxis]
+    h[0, :] = 1  # Always repeat the signal also!
+    return h
+
+
+class Reverb(Module):
+
+    def __init__(self, src: Module,
+                 delay: Module = Constant(3000),
+                 echo: Module = Constant(10000),
+                 p: Module = Constant(0.05)):
+        super().__init__()
+        self.delay = delay
+        self.echo = echo
+        self.p = p
+        self.b = FrameBuffer()
+        self.src = src
+
+    def out(self, clock_signal: ClockSignal):
+        o = self.src(clock_signal)
+        num_samples, num_c = clock_signal.shape
+        self.b.push(o, max_frames_to_buffer=10)
+        signal = self.b.get()
+
+        h = basic_reverb_ir(self.delay.out_mean_int(clock_signal),
+                            self.echo.out_mean_int(clock_signal),
+                            self.p.out_mean_float(clock_signal))
+
+        convolved = scipy.signal.convolve(signal, h, mode="valid")
+        return convolved[-num_samples:, :]
+
+
+class Ufgregt(Module):
+
+    def __init__(self):
+
+        #kick_sample = KickSampler().make()
+
+        kick_env = FuncEnvelopeGen(func=lambda t: np.exp(-((t-0.2)/1.9)**2) * np.sin(t*2*np.pi*1.2), length=Constant(2000), curvature=P(3))
+        kick_track = TrackConfig(Pattern(pattern=[1,0,1,0], note_values=1/8), kick_env)
+        self.out = Track(Parameter(120), kick_track)
+        self.out = Reverb(self.out,
+                          delay=P(1000, 0, 10000, knob="fx2_1"),
+                          echo=P(5000, 0, 10000, knob="fx2_2"),
+                          p=P(0.05, 0, 1, knob="fx2_3"))
