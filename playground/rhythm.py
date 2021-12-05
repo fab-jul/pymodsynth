@@ -3,6 +3,8 @@ import functools
 import scipy.signal
 import operator
 
+from numpy.polynomial import Polynomial
+
 from playground.modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
     SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer
 import random
@@ -517,14 +519,24 @@ class HoldTest(Module):
 
 
 @functools.lru_cache(maxsize=128)
-def basic_reverb_ir(delay, echo, p):
+def basic_reverb_ir(delay: int, echo: int, p: float):
     print("Making a reverb...")
     # We give it `delay` samples of nothing, then a linspace down.
+
+    _, decayer = poly_fit([0, 0.3, 0.8, 0.9], [0.2, 0.15, 0.01, 0.], num_samples=echo)
+
     h = np.random.binomial(1, p, delay + echo) * np.concatenate(
-        (np.zeros(delay), np.linspace(.2, 0, echo)), axis=0)
+        (np.zeros(delay), decayer), axis=0)
     h = h[:, np.newaxis]
     h[0, :] = 1  # Always repeat the signal also!
     return h
+
+
+def poly_fit(xs, ys, num_samples):
+    assert len(xs) == len(ys)
+    p = Polynomial.fit(xs, ys, deg=len(xs) - 1)
+    xs, ys = p.linspace(num_samples)
+    return xs, ys
 
 
 class Reverb(Module):
