@@ -3,7 +3,7 @@ import functools
 import scipy.signal
 import operator
 
-from modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
+from playground.modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
     SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer
 import random
 import numpy as np
