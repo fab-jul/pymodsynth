@@ -209,6 +209,16 @@ class TrackConfig(NamedTuple):
     combinator: Callable = np.add  # a property of the "instrument": how to combine overlapping notes?
 
 
+class NoteTrackConfig(NamedTuple):
+    pattern: Pattern
+    # InstrumentTrack has to supply length module, rest can be given by user
+    # envelope_gen=lambda ENV_LEN: FuncEnvelopeGen(func=myfunc, length=ENV_LEN, curvature=..., ...)
+    # or give note_lengths not in pattern, but supply to env_gen... 
+    envelope_gen: Callable[[Module], EnvelopeGen]
+    carrier: Module
+    post: Callable[[Module], Module] = lambda m: Id(m)
+
+
 class TriggerSource(Module):
     """Take patterns and bpm and acts as a source of a single trigger track.
     Set use_values to true if you don't just want ones in the output
@@ -376,13 +386,6 @@ class Hold(Module):
         return out.reshape(clock_signal.shape)
 
 
-class HoldTest(Module):
-    def __init__(self):
-        pattern = Pattern(pattern=[1, 2, 3, 0], note_values=1 / 4, note_lengths=[1 / 8, 1 / 8, 1 / 4, 1 / 8])
-        self.trigger_src = TriggerSource(Parameter(120, key="b"), pattern, use_values=True)
-        self.hold = Hold(self.trigger_src)
-        self.out = SineSource(frequency=self.hold * 110)
-
 
 class InstrumentTrack(Module):
     """If envelope_gen in config is None, create a window env gen with length note_lengths. Otherwise, use the given"""
@@ -475,6 +478,9 @@ class NewDrumTest(Module):
                                  ),
         }
 
+        # note_track_config:
+        # pattern, carrier, post, envelopegengen
+        #
         percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
         note_track = TrackConfig(pattern=Pattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
@@ -488,7 +494,7 @@ class NewDrumTest(Module):
 
         instruments1 = InstrumentTrack(bpm=bpm, config=note_track)
 
-        note_track2 = TrackConfig(pattern=Pattern(pattern=random.choices([0, 0.1, 0.3, 0.7, 1.2, 1.4, 1.8, 2.4], k=8),
+        note_track2 = TrackConfig(pattern=Pattern(pattern=random.choices([0, 0.05, 0.15, 0.35, 0.6, 0.7, 0.9, 1.2], k=8),
                                                  note_values=random.choice([1/2, 1 / 4, 3 / 4, 3 / 8]),
                                                  note_lengths=random.choices(
                                                      [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16], k=8)),
@@ -499,3 +505,14 @@ class NewDrumTest(Module):
         instruments2 = InstrumentTrack(bpm=bpm, config=note_track2)
 
         self.out = percussion + instruments1 * 0.1 + instruments2 * 0.1
+
+
+class HoldTest(Module):
+    def __init__(self):
+        pattern = Pattern(pattern=[1, 2, 3, 0], note_values=1 / 4, note_lengths=[1 / 8, 1 / 8, 1 / 4, 1 / 8])
+        self.trigger_src = TriggerSource(Parameter(120, key="b"), pattern, use_values=True)
+        self.hold = Hold(self.trigger_src)
+        self.out = SineSource(frequency=self.hold * 110)
+
+
+
