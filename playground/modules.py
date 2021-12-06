@@ -991,37 +991,79 @@ def to_melody(trigger, melody: _Cycler):
     return np.concatenate(output, 0)
 
 
+# Question, do we have access to the sampling frequency of the whole mod synt?
+# if yes it's nice cause we could do actual physical values for example milliseconds for delay
+# and hz for filter cutoffs...
 class DelayElement:
-    def __init__(self, time, feedback, gain=1, additive=False):
+    def __init__(self, time, feedback, gain=1, proportional=False, lo_cut=0.01, hi_cut=0.9, limit=False):
+        """
+        Basic delay element to create delays or other types of spatial effects
+
+        Parameters
+        ----------
+        time: int
+            number of buffer steps the signal is delayed
+        feedback: float
+            how much of the signal is fed back (0-1)
+        gain: float
+            amplification applied to the delay
+        proportional: bool
+            whether or not the normal signal amplitude is decreased when the feedback increases
+            (requires some gain to keep the volume)
+        lo_cut: float
+            lower cutoff frequency of the filter relative to the nyquist frequency
+        hi_cut: float
+            upper cutoff frequency of the filter relative to the nyquist frequency
+        limit: bool
+            use a basic limiter to avoid distortion
+        """
 
         self.time = time
         self.feedback = feedback
         self.gain = gain
-        self.delay = 0
-        self.additive = additive
+        self.delay = np.array([0])
+        self.proportional = proportional
+        self.limit = limit
+
+        self.filter_coeff_b, self.filter_coeff_a = scipy.signal.butter(4, [lo_cut, hi_cut], 'band')
 
     def __call__(self, signal_buffer):
-        # todo: potentially fillter the repeats so they sound smoother and not sound so metallic
         n = signal_buffer.maxlen - self.time - 1
         full_signal = signal_buffer.get()
         delayed_signal = full_signal[n*signal_buffer.frame_size:(n+1)*signal_buffer.frame_size]
-        if self.additive:
-            self.delay = delayed_signal + self.delay * self.feedback
-        else:
-            self.delay = delayed_signal * (1 - self.feedback) + self.delay * self.feedback
 
-        return self.delay * self.gain
+        if self.proportional:
+            self.delay = delayed_signal * (1 - self.feedback) + self.delay * self.feedback
+        else:
+            self.delay = delayed_signal + self.delay * self.feedback
+
+        self.delay = scipy.signal.lfilter(self.filter_coeff_b, self.filter_coeff_a, self.delay)
+
+        delay = self.delay * self.gain
+
+        if self.limit:
+            # TODO: only experimental, need to check the proper dynamic range
+            # you can get some drive if you set a high gain (~100) and enable limiting
+           delay = scipy.special.expit(delay*6)
+
+        return delay
 
 
 class SimpleDelay(Module):
 
-    def __init__(self, signal: Module, time, feedback, mix, additive=False):
+    def __init__(self, signal: Module, time, feedback, mix, gain=1, proportional=True, hi_cut=0.8, lo_cut=0.01, limit=False):
         super().__init__()
 
         self.signal = signal
         self.buffer = FrameBuffer()
 
-        self.delay = DelayElement(time=time, feedback=feedback, additive=additive)
+        self.delay = DelayElement(time=time,
+                                  feedback=feedback,
+                                  gain=gain,
+                                  proportional=proportional,
+                                  lo_cut=lo_cut,
+                                  hi_cut=hi_cut,
+                                  limit=limit)
 
         self.mix = mix
         self.delay_buffer_size = time + 1
@@ -1034,26 +1076,28 @@ class SimpleDelay(Module):
         return input_signal * (1 - self.mix) + self.delay(self.buffer) * self.mix
 
 
+# WIP not really a reverb at the moment...
 class DReverb(Module):
 
-    def __init__(self, signal: Module):
+    def __init__(self, signal: Module, mix, decay):
         super().__init__()
 
         self.signal = signal
         self.buffer = FrameBuffer()
+        self.decay = decay # not implemented
 
         self.delay_elements = [
-            DelayElement(time=4, feedback=0.9, gain=3),
-            # DelayElement(time=10, feedback=0.7, gain=1),
-            # DelayElement(time=7, feedback=0.3, gain=0.2),
-            # DelayElement(time=10, feedback=0.3, gain=0.3),
-            # DelayElement(time=12, feedback=0.2, gain=0.3),
-            # DelayElement(time=14, feedback=0.2, gain=0.2),
-            # DelayElement(time=16, feedback=0.2, gain=0.1),
+            DelayElement(time=2, feedback=0.8, proportional=True, gain=20, limit=True, hi_cut=0.6),
+            DelayElement(time=3, feedback=0.7, proportional=True, gain=3, limit=False, hi_cut=0.8),
+            DelayElement(time=10, feedback=0.7, proportional=True, gain=2, hi_cut=0.9),
+            DelayElement(time=7, feedback=0.8, proportional=True, gain=4, hi_cut=0.5),
+            DelayElement(time=16, feedback=0.9, proportional=True, gain=10, hi_cut=0.6, lo_cut=0.1),
+            DelayElement(time=14, feedback=0.8, proportional=True, gain=6, hi_cut=0.6),
         ]
 
-        self.mix = 0.6
+        self.mix = mix
         self.delay_buffer_size = 20
+        self.limit = False
 
     def out(self, clock_signal: ClockSignal):
         input_signal = self.signal(clock_signal)
@@ -1064,7 +1108,9 @@ class DReverb(Module):
         for delay in self.delay_elements:
             pseudo_reverb += delay(self.buffer)
 
-        # todo: add a limiter for pseudo reverb volume so it can get gritty with high gain without distortying
+        # TODO: only experimental, need to check the proper dynamic range
+        if self.limit:
+            pseudo_reverb = scipy.special.expit(pseudo_reverb * 6)
 
         return input_signal * (1 - self.mix) + pseudo_reverb * self.mix
 
@@ -1168,6 +1214,29 @@ class FooBar(Module):
 P = Parameter
 from scipy import signal
 
+class DelayTester(Module):
+    def __init__(self):
+        super().__init__()
+
+        self.base_freq = Parameter(220, lo=220/4, hi=440, key="q")
+        self.base_freq2 = Parameter(220/4, lo=220/16, hi=440, key="w")
+        self.bpm = Parameter(100, lo=10, hi=300, key="e", clip=True)
+        bpm_melody = self.bpm * 2
+        self.e =Parameter(2000, key="x")
+        self.melody_highs = StepSequencer(
+            SawSource,
+            self.base_freq,
+            bpm_melody,
+            melody=[1, 0, 12, 11, 8, 1],
+            #melody=[1, 2, 3, 4],
+            steps=[1],
+            gate='SSSH',
+            envelope=EnvelopeGenerator(self.e),
+            melody_randomizer=Parameter(0, knob="z")
+        )
+        self.out = DReverb(self.melody_highs, mix=0.8, decay="x")
+        # self.out = SimpleDelay(self.melody_highs, mix=0.7, time=7, feedback=0.6, hi_cut=0.6)
+
 
 class Buttering(Module):
     def __init__(self):
@@ -1189,29 +1258,26 @@ class Buttering(Module):
             envelope=EnvelopeGenerator(self.e),
             melody_randomizer=Parameter(0, knob="z")
         )
-        self.out = DReverb(self.melody_highs)
 
-        # self.out = SimpleDelay(self.melody_highs, mix=0.6, time=4, feedback=0.3)
+        self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
+                                                  wave_generator_cls=SawSource,)
 
-        # self.melody_lows = self.melody_highs.copy(base_frequency=self.base_freq/2,
-        #                                           wave_generator_cls=SawSource,)
-        #
-        # self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
-        # self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
-        # self.melody = (self.mixer_c1 * self.melody_highs +
-        #                self.mixer_c2 * self.melody_lows)
-        #
-        # self.step_bass = StepSequencer(
-        #     wave_generator_cls=SineSource,
-        #     base_frequency=self.base_freq2,
-        #     bpm=self.bpm,
-        #     melody=[1, 5, 3, 5],
-        #     steps=[1],
-        #     gate="SSSH")
-        #
-        # self.filtered = ButterworthFilter(inp=self.melody+self.step_bass*2, f_low=P(0.01, key="g"), f_high=P(10000, key="h"), mode="bp")
+        self.mixer_c1 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_1")
+        self.mixer_c2 = Parameter(0.5, lo=0, hi=1.5, knob="fx2_2")
+        self.melody = (self.mixer_c1 * self.melody_highs +
+                       self.mixer_c2 * self.melody_lows)
 
-        # self.out = self.filtered
+        self.step_bass = StepSequencer(
+            wave_generator_cls=SineSource,
+            base_frequency=self.base_freq2,
+            bpm=self.bpm,
+            melody=[1, 5, 3, 5],
+            steps=[1],
+            gate="SSSH")
+
+        self.filtered = ButterworthFilter(inp=self.melody+self.step_bass*2, f_low=P(0.01, key="g"), f_high=P(10000, key="h"), mode="bp")
+
+        self.out = self.filtered
 
 
 
