@@ -198,28 +198,35 @@ class Pattern:
     """Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)"""
     pattern: List[float]
     note_values: float
-    note_lengths: List[float] = None  # not used by percussion instruments
 
 
-class TrackConfig(NamedTuple):
+@dataclasses.dataclass
+class TrackConfig:
     """Input to Track"""
     pattern: Pattern
     envelope_gen: EnvelopeGen
-    # when an envelope is not enough: modulate to carrier, filter, add noise, ...
-    # must have type Module -> Module
-    post: Callable[[Module], Module] = lambda m: Id(m)
+    post: Callable[[Module], Module] = lambda m: Id(m)  # modulate to carrier, filter, add noise, ...
     combinator: Callable = np.add  # a property of the "instrument": how to combine overlapping notes?
 
 
-class NoteTrackConfig(NamedTuple):
-    pattern: Pattern
-    # InstrumentTrack has to supply length module, rest can be given by user
-    # envelope_gen=lambda ENV_LEN: FuncEnvelopeGen(func=myfunc, length=ENV_LEN, curvature=..., ...)
-    # or give note_lengths not in pattern, but supply to env_gen... 
-    envelope_gen: Callable[[Module], EnvelopeGen]
-    carrier: Module
-    post: Callable[[Module], Module] = lambda m: Id(m)
+@dataclasses.dataclass
+class NotePattern(Pattern):
+    """How long should every note in the pattern sound? Will be used as hold parameter of the envelope."""
+    note_lengths: List[float]
 
+
+# TODO: this child of TrackConfig needs default params even though they don't necessarily make sense, bc dataclass...
+@dataclasses.dataclass
+class NoteTrackConfig(TrackConfig):
+    """The envelope_gen takes the lengths from the NotePattern as length inputs."""
+    pattern: NotePattern = None
+    # takes a length Module and gives an envelope with desired specs
+    envelope_gen: Callable[[Module], EnvelopeGen] = lambda t: FuncEnvelopeGen(lambda s: s, t, Parameter(1))
+    carrier: Module = Constant(1)  # the note frequency and waveform
+
+
+p1 = Pattern(pattern=[1,2,3], note_values=1/4)
+p2 = NotePattern(pattern=[1,2,3,4], note_lengths=[1/2, 1/4, 1/2, 1/4], note_values=1/4)
 
 class TriggerSource(Module):
     """Take patterns and bpm and acts as a source of a single trigger track.
@@ -420,6 +427,15 @@ class InstrumentTrack(Module):
         carrier = TriangleSource(frequency=220 * Hold(TriggerSource(bpm=bpm, pattern=notes_pattern, use_values=True)))
         post = lambda m: m * carrier
         self.out = Track(bpm=bpm, config=TrackConfig(pattern=config.pattern, envelope_gen=env_gen, post=post))
+
+# note_track = TrackConfig(pattern=Pattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
+#                                                  note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
+#                                                  note_lengths=random.choices(
+#                                                      [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64,
+#                                                       3 / 64, 1 / 128, 3 / 128], k=8)),
+#                                  envelope_gen=None,
+#                                  post=None
+#                                  )
 
 
 """
