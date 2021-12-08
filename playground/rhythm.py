@@ -6,7 +6,7 @@ import operator
 from numpy.polynomial import Polynomial
 
 from playground.modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer
+    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer, ButterworthFilter
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -46,11 +46,11 @@ class EnvelopeGen(Module):  # TODO: This is ONLY a Module to make Parameter keyi
 
     def __lshift__(self, other):
         # add zeros to the right
-        return self | (RectangleEnvelopeGen(length=Constant(other)) * 0.0)
+        return self | (RectangleEnvGen(length=Constant(other)) * 0.0)
 
     def __rshift__(self, other):
         # add zeros to the left
-        return (RectangleEnvelopeGen(length=Constant(other)) * 0.0) | self
+        return (RectangleEnvGen(length=Constant(other)) * 0.0) | self
 
 
 class _MathEnvGen(EnvelopeGen):
@@ -125,6 +125,16 @@ class FuncEnvelopeGen(EnvelopeGen):
         return res
 
 
+class ConstEnvGen(EnvelopeGen):
+    """Pass a vector which will be returned every time."""
+
+    def __init__(self, vector):
+        self.vector = vector
+
+    def __call__(self, clock_signal, desired_indices):
+        return [self.vector for i in desired_indices]
+
+
 class ExpEnvelopeGen(EnvelopeGen):
     """An exp'ly rising edge followed by an exp'ly falling edge.
     Equivalent to FuncEnvelopeGen(np.exp, attack...) | FuncEnvelopeGen(lambda t: np.log(1+t), decay...)"""
@@ -150,14 +160,14 @@ class ExpEnvelopeGen(EnvelopeGen):
         return res
 
 
-class RectangleEnvelopeGen(EnvelopeGen):
+class RectangleEnvGen(EnvelopeGen):
     """Equivalent to FuncEnvelopeGen(func=lambda t: t, num_samples=length, curvature=1, start_val=1, end_val=1)"""
 
     def __init__(self, length: Module):
         self.length = length
 
     def __call__(self, clock_signal: ClockSignal, desired_indices):
-        length = self.length(clock_signal)[0, 0]
+        length = int(self.length(clock_signal)[0, 0])
         return [np.ones((length,)) for i in desired_indices]
 
 
@@ -205,7 +215,7 @@ class TrackConfig:
     """Input to Track"""
     pattern: Pattern
     envelope_gen: EnvelopeGen
-    post: Callable[[Module], Module] = lambda m: Id(m)  # modulate to carrier, filter, add noise, ...
+    post: Callable[[Module], Module] = Id  # modulate to carrier, filter, add noise, ...
     combinator: Callable = np.add  # a property of the "instrument": how to combine overlapping notes?
 
 
@@ -221,12 +231,14 @@ class NoteTrackConfig(TrackConfig):
     """The envelope_gen takes the lengths from the NotePattern as length inputs."""
     pattern: NotePattern = None
     # takes a length Module and gives an envelope with desired specs
-    envelope_gen: Callable[[Module], EnvelopeGen] = lambda t: FuncEnvelopeGen(lambda s: s, t, Parameter(1))
-    carrier: Module = Constant(1)  # the note frequency and waveform
+    envelope_gen: Callable[[Module], EnvelopeGen] = lambda t: RectangleEnvGen(length=t)
+    carrier_waveform: Callable[[Module], Module] = lambda t: SineSource(frequency=t)
+    carrier_base_frequency: Module = Constant(440)
 
 
-p1 = Pattern(pattern=[1,2,3], note_values=1/4)
-p2 = NotePattern(pattern=[1,2,3,4], note_lengths=[1/2, 1/4, 1/2, 1/4], note_values=1/4)
+p1 = Pattern(pattern=[1, 2, 3], note_values=1 / 4)
+p2 = NotePattern(pattern=[1, 2, 3, 4], note_lengths=[1 / 2, 1 / 4, 1 / 2, 1 / 4], note_values=1 / 4)
+
 
 class TriggerSource(Module):
     """Take patterns and bpm and acts as a source of a single trigger track.
@@ -277,7 +289,7 @@ class TriggerSource(Module):
         else:
             reps = int(np.ceil(len(trigger_indices) / len(rotated_pattern)))
             repeated = np.tile(rotated_pattern, reps)
-            if len(trigger_indices) > 0:
+            if len(trigger_indices) > 0: # TODO: there is a shape bug here
                 trigger_signal[trigger_indices] = repeated[:len(trigger_indices)]
         return trigger_signal
 
@@ -395,47 +407,33 @@ class Hold(Module):
         return out.reshape(clock_signal.shape)
 
 
-
-class InstrumentTrack(Module):
+class NoteTrack(Module):
     """If envelope_gen in config is None, create a window env gen with length note_lengths. Otherwise, use the given"""
 
-    def __init__(self, bpm: Module, config: TrackConfig):
-        # split config.Pattern into pattern and note values, and get the note lengths too. the pattern will be passed
-        # to Track(...), but the note values and lengths go to the envelope generator, which is injected to Track too
-
+    def __init__(self, bpm: Module, config: NoteTrackConfig):
         samples_per_bar = SAMPLING_FREQUENCY / (bpm / 60) * 4
 
-        if config.envelope_gen is None:
-            note_lengths = config.pattern.note_lengths if config.pattern.note_lengths is not None \
-                else [config.pattern.note_values] * len(config.pattern.pattern)
-            note_len_vals = 1.0 / len(note_lengths)
-            env_gen = FuncEnvelopeGen(func=lambda t: t,
-                                      length=samples_per_bar * Hold(TriggerSource(bpm=bpm,
-                                                                                  pattern=Pattern(note_lengths,
-                                                                                                  note_len_vals),
-                                                                                  use_values=True)),
-                                      curvature=Constant(1),
-                                      start_val=Constant(1),
-                                      end_val=Constant(1))
-        else:
-            env_gen = config.envelope_gen
-        # envelope gens need a certain length, but are otherwise rectangular windows... for now. later: attack TODO
-        # posts
-        # need note values to make carrier
+        # config.envelope_gen takes a length module and produces an env_gen with the user's params and length
+        hold_signal = Hold(TriggerSource(bpm=bpm,
+                                         pattern=Pattern(pattern=config.pattern.note_lengths,
+                                                         note_values=1 / len(config.pattern.note_lengths)),
+                                         use_values=True
+                                         )
+                           )
+        env_gen = config.envelope_gen(samples_per_bar * hold_signal)
+
+        # do not pass config.post on, because we will post _after_ lifting this track to carrier
+        track_cfg = TrackConfig(pattern=config.pattern, envelope_gen=env_gen, combinator=config.combinator)
+        track = Track(bpm=bpm, config=track_cfg)
+
         notes = [FreqFactors.STEP.value ** n for n in config.pattern.pattern]
         notes_pattern = Pattern(pattern=notes, note_values=config.pattern.note_values)
-        carrier = TriangleSource(frequency=220 * Hold(TriggerSource(bpm=bpm, pattern=notes_pattern, use_values=True)))
-        post = lambda m: m * carrier
-        self.out = Track(bpm=bpm, config=TrackConfig(pattern=config.pattern, envelope_gen=env_gen, post=post))
-
-# note_track = TrackConfig(pattern=Pattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
-#                                                  note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
-#                                                  note_lengths=random.choices(
-#                                                      [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64,
-#                                                       3 / 64, 1 / 128, 3 / 128], k=8)),
-#                                  envelope_gen=None,
-#                                  post=None
-#                                  )
+        carrier = config.carrier_waveform(config.carrier_base_frequency * Hold(TriggerSource(bpm=bpm,
+                                                                                             pattern=notes_pattern,
+                                                                                             use_values=True)))
+        modulated = carrier * track
+        post = config.post(modulated)
+        self.out = post
 
 
 """
@@ -496,33 +494,31 @@ class NewDrumTest(Module):
                                  ),
         }
 
-        # note_track_config:
-        # pattern, carrier, post, envelopegengen
-        #
         percussion = DrumMachine(bpm=bpm, track_cfg_dict=track_dict)
 
-        note_track = TrackConfig(pattern=Pattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
-                                                 note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
-                                                 note_lengths=random.choices(
-                                                     [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64,
-                                                      3 / 64, 1 / 128, 3 / 128], k=8)),
-                                 envelope_gen=None,
-                                 post=None
-                                 )
+        note_env = lambda length: ExpEnvelopeGen(
+            attack_length=length * 0.05,
+            attack_curvature=P(10),
+            decay_length=length * 0.95,
+            decay_curvature=P(3)
+        )
+        #note_env = lambda length: RectangleEnvGen(length=length)
+        note_track = NoteTrackConfig(
+            pattern=NotePattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
+                                note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
+                                note_lengths=random.choices(
+                                    [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64, 3 / 64, 1 / 128,
+                                     3 / 128], k=8)
+                                ),
+            envelope_gen=note_env,
+            carrier_waveform=lambda t: TriangleSource(frequency=t),
+            carrier_base_frequency=Parameter(220, key='f'),
+            post=lambda t: ButterworthFilter(t, f_low=Parameter(1, key='o'), f_high=Parameter(5000, key='p'), mode='bp'),
+        )
 
-        instruments1 = InstrumentTrack(bpm=bpm, config=note_track)
+        instruments1 = NoteTrack(bpm=bpm, config=note_track)
 
-        note_track2 = TrackConfig(pattern=Pattern(pattern=random.choices([0, 0.05, 0.15, 0.35, 0.6, 0.7, 0.9, 1.2], k=8),
-                                                 note_values=random.choice([1/2, 1 / 4, 3 / 4, 3 / 8]),
-                                                 note_lengths=random.choices(
-                                                     [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16], k=8)),
-                                 envelope_gen=None,
-                                 post=None
-                                 )
-
-        instruments2 = InstrumentTrack(bpm=bpm, config=note_track2)
-
-        self.out = percussion + instruments1 * 0.1 + instruments2 * 0.1
+        self.out = percussion + instruments1 * 0.3
 
 
 class HoldTest(Module):
@@ -531,7 +527,6 @@ class HoldTest(Module):
         self.trigger_src = TriggerSource(Parameter(120, key="b"), pattern, use_values=True)
         self.hold = Hold(self.trigger_src)
         self.out = SineSource(frequency=self.hold * 110)
-
 
 
 @functools.lru_cache(maxsize=128)
@@ -585,11 +580,11 @@ class Reverb(Module):
 class Ufgregt(Module):
 
     def __init__(self):
+        # kick_sample = KickSampler().make()
 
-        #kick_sample = KickSampler().make()
-
-        kick_env = FuncEnvelopeGen(func=lambda t: np.exp(-((t-0.2)/1.9)**2) * np.sin(t*2*np.pi*1.2), length=Constant(2000), curvature=P(3))
-        kick_track = TrackConfig(Pattern(pattern=[1,0,1,0], note_values=1/8), kick_env)
+        kick_env = FuncEnvelopeGen(func=lambda t: np.exp(-((t - 0.2) / 1.9) ** 2) * np.sin(t * 2 * np.pi * 1.2),
+                                   length=Constant(2000), curvature=P(3))
+        kick_track = TrackConfig(Pattern(pattern=[1, 0, 1, 0], note_values=1 / 8), kick_env)
         self.out = Track(Parameter(120), kick_track)
         self.out = Reverb(self.out,
                           delay=P(1000, 0, 10000, knob="fx2_1"),
