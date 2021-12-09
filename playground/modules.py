@@ -83,6 +83,12 @@ class Clock:
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
         return ClockSignal(ts, sample_indices, self.sample_rate)
 
+    def get_until(self, num_samples):
+        sample_indices = np.arange(num_samples, dtype=int)
+        ts = sample_indices / self.sample_rate
+        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
+        return ClockSignal(ts, sample_indices, self.sample_rate)
+
 
 class State:
 
@@ -249,10 +255,14 @@ class Module:
         _copy(src=src_params, target=self.get_params_by_name())
         _copy(src=src_state, target=self.get_states_by_name())
 
+    def sample(self, num_samples: int):
+        clock_signal = Clock.get_until(num_samples)
+        res = self.__call__(clock_signal)
+        return res
+
 
 class Id(Module):
     """Every Monoid needs a neutral element ;)"""
-
     def __init__(self, inp: Module):
         self.out = inp
 

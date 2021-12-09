@@ -532,6 +532,19 @@ class NewDrumTest(Module):
         self.out = percussion + instruments1 * 0.3
 
 
+class MultiNote(Module):
+    """
+    WIP
+    Actually envelopes of high freqs should decay quicker, so maybe we should add envs, not signals...
+    """
+    def __init__(self, source_waveform: Callable[[Module], Module], num_overtones: int):
+        waves = []
+        for i in num_overtones:
+
+            wave = source_waveform(frequency=freq, phase=phase) * amp
+            waves.append(wave)
+
+
 class MultiSourceTest(Module):
     def __init__(self):
         self.src = MultiSource(base_frequency=Parameter(220, key='f'), source=SineSource, num_overtones=100)
