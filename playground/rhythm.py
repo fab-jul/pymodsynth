@@ -200,6 +200,17 @@ class ADSREnvelopeGen(EnvelopeGen):
         return res
 
 
+class MultiSource(Module):
+    def __init__(self, base_frequency: Module, source: Callable[[Module], Module], num_overtones: int, randomize_phases=True):
+        """The source parameter is a module constructor"""
+        super().__init__()
+        self.freqs = [i * base_frequency for i in range(1, num_overtones + 1)]
+        self.amps = [1.0/i for i in range(1, num_overtones + 1)]
+
+        def _phase():
+            return Constant(random.random()*2*np.pi) if randomize_phases else Constant(0)
+        self.out = sum(source(frequency=freq, phase=_phase()) * amp for freq, amp in zip(self.freqs, self.amps)) / sum(self.amps)
+
 #######################################################################################################
 
 
@@ -519,6 +530,12 @@ class NewDrumTest(Module):
         instruments1 = NoteTrack(bpm=bpm, config=note_track)
 
         self.out = percussion + instruments1 * 0.3
+
+
+class MultiSourceTest(Module):
+    def __init__(self):
+        self.src = MultiSource(base_frequency=Parameter(220, key='f'), source=SineSource, num_overtones=100)
+        self.out = ButterworthFilter(self.src, f_low=P(10, key="o"), f_high=P(5000, key="p"), mode="bp")
 
 
 class HoldTest(Module):
