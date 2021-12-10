@@ -537,12 +537,42 @@ class MultiNote(Module):
     WIP
     Actually envelopes of high freqs should decay quicker, so maybe we should add envs, not signals...
     """
-    def __init__(self, source_waveform: Callable[[Module], Module], num_overtones: int):
+    def __init__(self, bpm: Module, source_waveform: Callable[[Module], Module], num_overtones: int):
         waves = []
-        for i in num_overtones:
-
-            wave = source_waveform(frequency=freq, phase=phase) * amp
+        pattern = NotePattern(pattern=random.choices([0, 1, 3, 7, 12, 14, 18, 24], k=8),
+                                    note_values=random.choice([1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16]),
+                                    note_lengths=random.choices(
+                                        [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64, 3 / 64], k=8)
+                              )
+        base_freq = Parameter(220, key='f')
+        base_phase = Parameter(0.01, key="p")
+        for i in range(num_overtones):
+            phase_factor = base_phase * i
+            amp_factor = 1/(1+i)
+            length_factor = 1 - i * (0.5/num_overtones)
+            freq_factor = base_freq * (i+1)
+            note_env = lambda length: ExpEnvelopeGen(
+                attack_length=length * length_factor * 0.05,
+                attack_curvature=P(10),
+                decay_length=length * length_factor * 0.95,
+                decay_curvature=P(3)
+            )
+            note_track = NoteTrackConfig(
+                pattern=pattern,
+                envelope_gen=note_env,
+                carrier_waveform=lambda t: source_waveform(frequency=t, phase=phase_factor) * amp_factor,
+                carrier_base_frequency=freq_factor,
+                post=Id,
+            )
+            wave = NoteTrack(bpm=bpm, config=note_track)
             waves.append(wave)
+        self.out = sum(waves)/num_overtones
+
+
+class MultiNoteTest(Module):
+    def __init__(self):
+        bpm = Parameter(120, key="b")
+        self.out = MultiNote(bpm=bpm, source_waveform=SawSource, num_overtones=9)
 
 
 class MultiSourceTest(Module):
