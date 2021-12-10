@@ -1,10 +1,25 @@
-import dataclasses
+"""Watch last modified date of files."""
+
 import os
 import time
-from typing import Callable
 
 
 class FileModifiedTimeTracker:
+    """Simple tracker.
+
+    Note that this tracker does not implement any polling, the caller has to poll.
+
+    Usage:
+
+      t = FileModifiedTimeTracker(path)
+      # Some sort of event loop.
+      while True:
+        if t.has_changes:
+          # Do something with the file
+          ...
+          # Mark as used
+          t.did_read_file_just_now()
+    """
 
     def __init__(self, path_to_watch: str):
         if not os.path.isfile(path_to_watch):
