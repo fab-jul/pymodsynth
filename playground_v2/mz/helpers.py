@@ -1,4 +1,14 @@
 import collections
+from typing import TypeVar
+import numpy as np
+
+
+def is_class_and_subclass(cls, t):
+    """Safe version of `issubclass` that returns False if `cls` is not an actual class."""
+    try:
+        return issubclass(cls, t)
+    except TypeError:
+        return False
 
 
 class LRUDict:
@@ -36,3 +46,32 @@ class LRUDict:
         self._cache[key] = value
         self._keys_access_counts[key] = self._counter
         self._counter += 1
+
+
+class ArrayBuffer:
+
+    def __init__(self, initial_capacity: int = 1) -> None:
+        #self._capacity = initial_capacity
+        self._buffer = collections.deque(maxlen=initial_capacity)
+
+    def set_capacity(self, capacity: int):
+        if capacity == self._buffer.maxlen:
+            return
+        elements = list(self._buffer)[-capacity:]
+        self._buffer = collections.deque(elements, maxlen=capacity)
+
+    def push(self, current: np.ndarray):
+        self._buffer.append(current)
+
+    def get(self):
+        """Return concatenated buffer contents."""
+        return np.concatenate(list(self.__iter__()), axis=0)
+
+    def __iter__(self):
+        if not self._buffer:
+            raise ValueError("Empty ArrayBuffer, cannot iterate!")
+        last = self._buffer[-1]
+        for _ in range(self._buffer.maxlen - len(self._buffer)):
+            yield np.zeros_like(last)
+        yield from self._buffer
+        

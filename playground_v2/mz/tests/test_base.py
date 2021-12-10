@@ -1,11 +1,14 @@
 
+import numpy as np
 import dataclasses
+from typing import List
 from numpy import exp
 import pytest
 
 from unittest import mock
 
 from mz import base
+from playground_v2.mz.base import BaseModule
 
 
 @base.moduleclass
@@ -82,6 +85,65 @@ def test_cache_key_raises():
     with pytest.raises(base.NoCacheKeyError):
         root.get_cache_key()
 
+
+def test_is_subclass():
+
+    @base.moduleclass
+    class M(base.Module):
+        pass
+
+    assert base.safe_is_subclass(base.Constant, base.BaseModule)
+    assert base.safe_is_subclass(M, base.BaseModule)
+
+    @base.moduleclass
+    class N(base.Module):
+        src: base.Module
+
+    n = N(src=base.Constant(2.))
+    assert n._other_modules == ["src"]
+
+
+def test_prepend_past():
+
+    @base.moduleclass
+    class M(base.Module):
+
+        src: base.Module
+        _src_prepended: List[np.ndarray] = dataclasses.field(default_factory=list)
+
+        def out_given_inputs(self, clock_signal, src):
+            self._src_prepended.append(
+                self.prepend_past("src", src, num_frames=3))
+            return src
+
+    class ArangeSource(base.Module):
+
+        def out(self, clock_signal: base.ClockSignal):
+            return clock_signal.sample_indices
+            
+    m = M(src=ArangeSource())
+    clock = base.Clock(num_samples=4, num_channels=2, sample_rate=1)
+
+    m(clock())
+    m(clock())
+    m(clock())
+    m(clock())
+
+    clock_2 = base.Clock(num_samples=4, num_channels=2, sample_rate=1)
+    indices_0 = clock_2().sample_indices
+    indices_1 = clock_2().sample_indices
+    indices_2 = clock_2().sample_indices
+    indices_3 = clock_2().sample_indices
+    zeros = np.zeros_like(indices_0)
+
+    expected_src_prepended = [
+        np.concatenate([zeros,     zeros,     indices_0], axis=0),
+        np.concatenate([zeros,     indices_0, indices_1], axis=0),
+        np.concatenate([indices_0, indices_1, indices_2], axis=0),
+        np.concatenate([indices_1, indices_2, indices_3], axis=0),
+    ]
+
+    np.testing.assert_array_equal(m._src_prepended, expected_src_prepended)
 
 
 def test_named_submodules():

@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import collections
+import scipy.signal
 import contextlib
 import numpy as np
 
@@ -66,6 +67,7 @@ class Clock:
         return self.get_clock_signal(np.arange(num_samples, dtype=int))
 
 
+# TODO
 class ModuleMeta(type):
     def __new__(cls, name, bases, dct):
         return super().__new__(cls, name, bases, dct)
@@ -75,6 +77,17 @@ class NoCacheKeyError(Exception):
     """Used to indicate that a module has no cache key."""
 
 
+def safe_is_subclass(cls, base_cls):
+    try:
+        all_base_classes = cls.__mro__
+    except AttributeError:
+        return False
+    for c in all_base_classes:
+        if c.__name__ == base_cls.__name__:
+            return True
+    return False
+
+
 @moduleclass
 class BaseModule:#(metaclass=ModuleMeta):
     """Root class for everything.
@@ -82,24 +95,20 @@ class BaseModule:#(metaclass=ModuleMeta):
     Supports recursively finding parameters and state.
     """
 
-    @classmethod
-    def _is_subclass(cls, instance):
-        try:
-            all_base_classes = instance.__class__.__mro__
-        except AttributeError:
-            return False
-        for c in all_base_classes:
-            if c.__name__ == cls.__name__:
-                return True
-        return False
-
     def __post_init__(self):
         self._modules = {k: v for k, v in vars(self).items() if isinstance(v, BaseModule)}
+        self._frame_buffers = collections.defaultdict(helpers.ArrayBuffer)
 
     def _iter_direct_submodules(self):
         for name, a in vars(self).items():
-            if BaseModule._is_subclass(a):
+            if safe_is_subclass(a.__class__, BaseModule):
                 yield name, a
+
+    def prepend_past(self, key: str, current: np.ndarray, *, num_frames: int = 2) -> np.ndarray:
+        frame_buffer = self._frame_buffers[key]
+        frame_buffer.set_capacity(num_frames)
+        frame_buffer.push(current)
+        return frame_buffer.get()
 
     def _get_cache_key_recursive(self):
         output = []
@@ -181,10 +190,7 @@ class Module(BaseModule):
             if field.type == SingleValueModule:  # TODO: won't work with reloading
                 single_value_modules.append(field.name)
 
-#            elif issubclass(field.type, _BufferedModule):
-#                buffer_modules.append(field.name)
-
-            elif issubclass(field.type, Module):
+            elif safe_is_subclass(field.type, BaseModule):
                 other_modules.append(field.name)
         self._single_value_modules = single_value_modules
         self._other_modules = other_modules
@@ -251,61 +257,3 @@ class Constant(Module):
 
 
 SingleValueModule = TypeVar("SingleValueModule", bound=Module)
-
-
-@moduleclass
-class SineSource(Module):
-    frequency: Module = Constant(440.)
-    amplitude: Module = Constant(1.0)
-    phase: Module = Constant(0.0)
-    _last_cumsum_value: State = State(0.)
-
-    def out_given_inputs(self, clock_signal: ClockSignal, frequency: np.ndarray, amplitude: np.ndarray, phase: np.ndarray):
-        dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
-        cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value.get()
-        self._last_cumsum_value.set(cumsum[-1, :])
-        out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
-        return out
-
-
-class _BufferedModule:
-    pass
-
-
-@functools.lru_cache()
-def BufferedModule(t):
-    return type(f"BufferedModule{t}", (_BufferedModule,), __dict={"t": t})
-
-#BufferedModule(2)
-
-@moduleclass
-class Reverb(Module):
-
-    src: Module
-    delay: SingleValueModule = Constant(3000)
-    echo: SingleValueModule = Constant(10000)
-    p: SingleValueModule = Constant(0.05)
-
-    def out_given_inputs(self,
-                         clock_signal: ClockSignal,
-                         src: np.ndarray,
-                         delay: float,
-                         echo: float,
-                         p: float):
-        return src * echo
-
-
-class Foo(Module):
-
-    bar: Module
-
-    def out_given_inputs(self, clock_signal, bar):
-        pass
-    
-
-
-def _foo():
-    r = Reverb(SineSource())
-    clock = Clock()
-    clock_signal = clock()
-    print(r(clock_signal))
