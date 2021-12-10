@@ -25,7 +25,6 @@ def poly_fit(xs, ys, num_samples):
     return xs, ys
 
 
-@base.moduleclass
 class Reverb(base.Module):
 
     src: base.Module

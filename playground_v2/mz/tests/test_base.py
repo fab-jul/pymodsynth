@@ -11,15 +11,17 @@ from mz import base
 from playground_v2.mz.base import BaseModule
 
 
-@base.moduleclass
 class Node(base.BaseModule):
     src: base.Module
     trg: base.BaseModule
 
-@base.moduleclass
+
 class NodeModule(base.Module):
     src: base.Module
     trg: base.BaseModule
+
+    def out(self, clock_signal):
+        return clock_signal.zeros()
 
 
 def test_cached_sampling():
@@ -36,13 +38,14 @@ def test_cached_sampling():
     root.sample(clock, num_samples=10)
 
     assert out_mock.call_count == 1
-    assert list(root._sample_cache.keys()) == [(repr(clock), 10, root.get_cache_key())]
+    assert list(root._sample_cache.keys()) == [
+        ((repr(clock), 10), root.get_cache_key())]
     
     root.sample(clock, num_samples=11)
     assert out_mock.call_count == 2
     assert list(root._sample_cache.keys()) == [
-        (repr(clock), 10, root.get_cache_key()),
-        (repr(clock), 11, root.get_cache_key())]
+        ((repr(clock), 10), root.get_cache_key()),
+        ((repr(clock), 11), root.get_cache_key())]
 
 
 def test_iter_direct_submodules():
@@ -88,14 +91,12 @@ def test_cache_key_raises():
 
 def test_is_subclass():
 
-    @base.moduleclass
     class M(base.Module):
         pass
 
     assert base.safe_is_subclass(base.Constant, base.BaseModule)
     assert base.safe_is_subclass(M, base.BaseModule)
 
-    @base.moduleclass
     class N(base.Module):
         src: base.Module
 
@@ -105,7 +106,6 @@ def test_is_subclass():
 
 def test_prepend_past():
 
-    @base.moduleclass
     class M(base.Module):
 
         src: base.Module
@@ -150,7 +150,6 @@ def test_named_submodules():
 
     raise pytest.skip("WIP")
 
-    @base.moduleclass
     class Leaf(base.BaseModule):
         v: int
 

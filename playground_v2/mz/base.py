@@ -10,9 +10,6 @@ from mz import helpers
 from typing import Mapping, NamedTuple, Optional, Set, TypeVar
 
 
-moduleclass = functools.partial(dataclasses.dataclass, eq=True)
-
-
 class ClockSignal(NamedTuple):
     ts: np.ndarray
     sample_indices: np.ndarray
@@ -67,16 +64,11 @@ class Clock:
         return self.get_clock_signal(np.arange(num_samples, dtype=int))
 
 
-# TODO
-class ModuleMeta(type):
-    def __new__(cls, name, bases, dct):
-        return super().__new__(cls, name, bases, dct)
-
-
 class NoCacheKeyError(Exception):
     """Used to indicate that a module has no cache key."""
 
 
+# TODO: This may actually not be needed if we only hot-reload a user file...!
 def safe_is_subclass(cls, base_cls):
     try:
         all_base_classes = cls.__mro__
@@ -88,8 +80,18 @@ def safe_is_subclass(cls, base_cls):
     return False
 
 
-@moduleclass
-class BaseModule:#(metaclass=ModuleMeta):
+class ModuleMeta(type):
+    """Meta class for Modules.
+    
+    This is used to convert all modules to dataclasses.
+    """
+    def __new__(cls, name, bases, dct):
+        cls = super().__new__(cls, name, bases, dct)
+        cls = dataclasses.dataclass(cls, eq=True)
+        return cls
+
+
+class BaseModule(metaclass=ModuleMeta):
     """Root class for everything.
 
     Supports recursively finding parameters and state.
@@ -98,6 +100,39 @@ class BaseModule:#(metaclass=ModuleMeta):
     def __post_init__(self):
         self._modules = {k: v for k, v in vars(self).items() if isinstance(v, BaseModule)}
         self._frame_buffers = collections.defaultdict(helpers.ArrayBuffer)
+        self._sample_cache = helpers.LRUDict(capacity=16)
+
+        single_value_modules = []
+        other_modules = []
+        for field in dataclasses.fields(self):
+            if field.type == SingleValueModule:  # TODO: won't work with reloading
+                single_value_modules.append(field.name)
+            elif safe_is_subclass(field.type, BaseModule):
+                other_modules.append(field.name)
+        self._single_value_modules = single_value_modules
+        self._other_modules = other_modules
+
+        self.setup()
+
+    def setup(self):
+        """Subclasses can overwrite this to run code after an instance was constructed."""
+
+    # TODO: Could this be a decorator?
+    def cached_call(self, key_prefix, fn):
+        try:
+            key = (key_prefix, self.get_cache_key())
+        except NoCacheKeyError:
+            key = None
+
+        if key and key in self._sample_cache:
+            return self._sample_cache[key]
+
+        result = fn()
+
+        if key:
+            self._sample_cache[key] = result
+
+        return result
 
     def _iter_direct_submodules(self):
         for name, a in vars(self).items():
@@ -175,47 +210,20 @@ class State:
         self._value = value
 
 
-@moduleclass
 class Module(BaseModule):
     """Root class for sound modules.
 
-    API contract:
+    API contract: TODO
     """
 
-    def __post_init__(self):
-        super().__post_init__()
-        single_value_modules = []
-        other_modules = []
-        for field in dataclasses.fields(self):
-            if field.type == SingleValueModule:  # TODO: won't work with reloading
-                single_value_modules.append(field.name)
-
-            elif safe_is_subclass(field.type, BaseModule):
-                other_modules.append(field.name)
-        self._single_value_modules = single_value_modules
-        self._other_modules = other_modules
-
-        self._sample_cache = helpers.LRUDict(capacity=16)
-
     def sample(self, clock: Clock, num_samples: int):
-        try:
-            key = (repr(clock), num_samples, self.get_cache_key())
-        except NoCacheKeyError:
-            key = None
+        def _sample():
+            print("Sampling...")
+            with self.disable_state():
+                clock_signal = clock.get_clock_signal_num_samples(num_samples)
+                result = self.out(clock_signal)
 
-        if key and key in self._sample_cache:
-            return self._sample_cache[key]
-
-        print("Sampling...")
-
-        with self.disable_state():
-            clock_signal = clock.get_clock_signal_num_samples(num_samples)
-            result = self.out(clock_signal)
-
-        if key:
-            self._sample_cache[key] = result
-
-        return result
+        return self.cached_call(key_prefix=(repr(clock), num_samples), fn=_sample)
 
     def out(self, clock_signal: ClockSignal):
         inputs = {}
@@ -232,21 +240,20 @@ class Module(BaseModule):
         return np.mean(self.out(clock_signal))
 
     def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
-        pass
+        raise NotImplementedError("Must be implemented by subclasses!")
 
 
-class Foo(Module):
-
-    def out(self, clock_signal):
-        decy = self.decay.out_single_value()
+# Use to annotate single values, TODO
+SingleValueModule = TypeVar("SingleValueModule", bound=Module)
 
 
-@moduleclass
 class Constant(Module):
     
     value: float
 
     def get_cache_key(self):
+        # We provide a concrete get_cache_key implementation.
+        # In practise, this will be the only implementation.
         return (("value", self.value),)
 
     def out(self, clock_signal: ClockSignal):
@@ -254,6 +261,3 @@ class Constant(Module):
 
     def out_single_value(self, _) -> float:
         return self.value
-
-
-SingleValueModule = TypeVar("SingleValueModule", bound=Module)
