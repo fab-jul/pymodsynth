@@ -1,13 +1,14 @@
 import dataclasses
 import functools
 import collections
+import typing
 import scipy.signal
 import contextlib
 import numpy as np
 
 from mz import helpers
 
-from typing import Mapping, NamedTuple, Optional, Set, TypeVar
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 
 class ClockSignal(NamedTuple):
@@ -80,6 +81,26 @@ def safe_is_subclass(cls, base_cls):
     return False
 
 
+# This is extracted from flax, and makes sure BaseModule subclasses get
+# auto-completion in IDEs. According to flax:
+# > This decorator is interpreted by static analysis tools as a hint
+#   that a decorator or metaclass causes dataclass-like behavior.
+#   See https://github.com/microsoft/pyright/blob/main/specs/dataclass_transforms.md
+#   for more information about the __dataclass_transform__ magic.
+_T = TypeVar("_T")
+def __dataclass_transform__(
+    *,
+    eq_default: bool = True,
+    order_default: bool = False,
+    kw_only_default: bool = False,
+    field_descriptors: Tuple[Union[type, Callable[..., Any]], ...] = (()),
+) -> Callable[[_T], _T]:
+  # If used within a stub file, the following implementation can be
+  # replaced with "...".
+  return lambda a: a
+
+
+@__dataclass_transform__()
 class ModuleMeta(type):
     """Meta class for Modules.
     
@@ -87,7 +108,11 @@ class ModuleMeta(type):
     """
     def __new__(cls, name, bases, dct):
         cls = super().__new__(cls, name, bases, dct)
-        cls = dataclasses.dataclass(cls, eq=True)
+        cls = dataclasses.dataclass(
+            cls, eq=True,
+            # TODO: This kind of assumes modules are immutable, which they
+            # are not really.
+            unsafe_hash=True)
         return cls
 
 
@@ -95,12 +120,35 @@ class BaseModule(metaclass=ModuleMeta):
     """Root class for everything.
 
     Supports recursively finding parameters and state.
+
+    Notes for subclasses
+    --------------------
+
+    Example:
+
+      class Foo(BaseModule):
+          var: int
+          foo: Sequence[float] = dataclasses.field(default_factory=list)
+
+          def setup(self):
+              self._bar = self.var + 2
+
+    Notes:
+    - Subclasses should use dataclass attributes to specify instance variables.
+      Like dataclasses, be careful with list efaults (use dataclasses.field).
+    - Subclasses can overwrite `setup` to provide custom initialization code
+
+    Functinality:
+    # TODO
     """
 
     def __post_init__(self):
-        self._modules = {k: v for k, v in vars(self).items() if isinstance(v, BaseModule)}
+        # Will be used to raise exception if setattr is called after setup.
+        self._locked = False
+
+        # TODO: This should be State modules!
         self._frame_buffers = collections.defaultdict(helpers.ArrayBuffer)
-        self._sample_cache = helpers.LRUDict(capacity=16)
+        self._call_cache = helpers.LRUDict(capacity=16)
 
         single_value_modules = []
         other_modules = []
@@ -114,85 +162,155 @@ class BaseModule(metaclass=ModuleMeta):
 
         self.setup()
 
+        # TODO: Test
+        self._direct_submodules = [
+            (name, a) for name, a in vars(self).items()
+            if isinstance(a, BaseModule)]
+
+        self._state_vars = [
+            (name, a) for name, a in vars(self).items()
+            if isinstance(a, State)]
+
+        # After this, no more assignements allowed.
+        # TODO: Use to ensure hash makes sense
+        self._locked = True
+
+    def unlock(self):
+        self._locked = False
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # TODO
+        if hasattr(self, "_locked") and self._locked and name != "_locked":
+            raise ValueError(f"Cannot assign after setup, got setattr for `{name}`.")
+        super().__setattr__(name, value)
+
     def setup(self):
         """Subclasses can overwrite this to run code after an instance was constructed."""
 
     # TODO: Could this be a decorator?
     def cached_call(self, key_prefix, fn):
+        """Return fn() but cache result, only re-execute `fn` if the cache key changes."""
         try:
-            key = (key_prefix, self.get_cache_key())
+            # Always use the function name in the cache name.
+            # Note that this means that collisions can occur
+            # if callers use this function on the same function name.
+            key = (fn.__name__, key_prefix, self.get_cache_key())
         except NoCacheKeyError:
             key = None
 
-        if key and key in self._sample_cache:
-            return self._sample_cache[key]
+        if key and key in self._call_cache:
+            return self._call_cache[key]
 
         result = fn()
 
         if key:
-            self._sample_cache[key] = result
+            self._call_cache[key] = result
 
         return result
 
-    def _iter_direct_submodules(self):
-        for name, a in vars(self).items():
-            if safe_is_subclass(a.__class__, BaseModule):
-                yield name, a
-
     def prepend_past(self, key: str, current: np.ndarray, *, num_frames: int = 2) -> np.ndarray:
+        """Call to transparently fetch previous versions of an array.
+        
+        Example usage, typically in a `Module` subclass:
+        
+        class SomeSubClass(Module):
+
+            src: Module
+
+            def out_with_inputs(self, clock_signal, src):
+                # Now, `src_with_context` is a tensor of length 3 * num_samples,
+                # containing the last 2 version of `src`, as well as the current, 
+                # in that order
+                src_with_context = self.prepend_past("src", current=src, num_frames=3)
+
+        Args:
+          key: Name of the tensor we fetch, used as a key for the frame buffer to use.
+          current: Current version of the array, shape (S, C), where S = number of samples in a frame.
+          num_frames: How many frames to get *in total*, i.e., including `current`.
+            If this changes between calls, the underlying buffer is adapted.
+
+        Returns:
+          An array of shape (num_frames * S, C).
+        """
         frame_buffer = self._frame_buffers[key]
         frame_buffer.set_capacity(num_frames)
         frame_buffer.push(current)
         return frame_buffer.get()
 
-    def _get_cache_key_recursive(self):
+    def _get_cache_key_recursive(self) -> Sequence[Tuple[str, Any]]:
         output = []
-        for name, module in self._iter_direct_submodules():
-            output += [(name + "." + key, value) for key, value in module.get_cache_key()]
+        for name, module in self._direct_submodules:
+            output += [(name + "." + key, value) 
+                       # Go into recursion.
+                       for key, value in module.get_cache_key()]
         if not output:
             raise NoCacheKeyError()
         return tuple(output)
 
-    def get_cache_key(self):
+    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
+        """Get a key uniquely describing the state this module is in.
+        
+        If no such description is suitable, raise `NoCacheKeyError`.
+        
+        By default, we defer the cache key calculation to any immediate
+        submodules, which in turn recursively do the same,
+        until we land at leaf submodules, which *typically* are Constant
+        or Parameter modules, which implement `get_cache_key` by returning their value.
+        Thus, in practise, this function returns something like:
+
+            [("current.child1.param1.value", 1),
+             ("current.child1.param2.value", 2),
+             ("current.child2.value", 3)]
+        """
+        # The default implementaiton of cache key defers to
+        # any direct submodules, see `_get_cache_key_recursive`.
         return self._get_cache_key_recursive()
 
-    # TODO: This is broken
-    def _named_submodules(self,
-                          memo: Optional[Set["BaseModule"]] = None,
-                          prefix: str = ""):
+    # STATE: use explicit initial value, use find_submodules with all,
+    # then get their state.
+
+    def _iter_named_submodules(self,
+                               memo: Optional[Set["BaseModule"]] = None,
+                               prefix: str = "") -> Iterable[Tuple[str, "BaseModule"]]:
         # `memo` is used to make sure we count everything at most once.
         if memo is None:
             memo = set()
         if self not in memo:
             yield prefix, self
-            for name, module in self._modules.items():
-                if module is None:
-                    continue
+            for name, module in self._direct_submodules:
                 submodule_prefix = prefix + ("." if prefix else "") + name
-                for m in module.named_modules(memo, submodule_prefix):
-                    yield m
+                for p, m in module._iter_named_submodules(memo, submodule_prefix):
+                    yield p, m
 
-    def named_submodules(self) -> Mapping[str, "BaseModule"]:
-        return {name: m for name, m in self._named_submodules()}
+    def find_submodules(self, cls=None) -> Mapping[str, "BaseModule"]:
+        """Return all submodules, optionally filtering by `cls`."""
+        if not cls:
+            cls = BaseModule
+        return {name: m for name, m in self._iter_named_submodules()
+                if issubclass(m.__class__, cls)}
 
-    def _get_params_non_recursive(self):
-        pass
-
-    def _get_cache_state(self):
-        raise NoCacheKeyError()
+    def get_params(self) -> Mapping[str, "BaseModule"]:
+        return self.find_submodules(cls=Parameter)
 
     def reset_state(self):
+        # TODO: Implement by inspecting default value of State params.
         pass
 
-    def get_state(self):
-        pass
-
+    def get_state_dict(self) -> Mapping[str, "BaseModule"]:
+        # Get all modules, then ask them for their state.
+        state_dict = {}
+        for name, m in self._iter_named_submodules():
+            for state_name, state in m._state_vars:
+                state_dict[".".join((name, state_name))] = state
+        return state_dict
+        
     def set_state(self, state):
+        # TODO
         pass
 
     @contextlib.contextmanager
     def disable_state(self):
-        state = self.get_state()
+        state = self.get_state_dict()
         self.reset_state()
         yield
         self.set_state(state)
@@ -251,7 +369,7 @@ class Constant(Module):
     
     value: float
 
-    def get_cache_key(self):
+    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
         # We provide a concrete get_cache_key implementation.
         # In practise, this will be the only implementation.
         return (("value", self.value),)
@@ -261,3 +379,8 @@ class Constant(Module):
 
     def out_single_value(self, _) -> float:
         return self.value
+
+
+class Parameter(Constant):
+
+    pass

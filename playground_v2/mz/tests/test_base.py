@@ -8,7 +8,7 @@ import pytest
 from unittest import mock
 
 from mz import base
-from playground_v2.mz.base import BaseModule
+from mz.base import BaseModule
 
 
 class Node(base.BaseModule):
@@ -27,6 +27,7 @@ class NodeModule(base.Module):
 def test_cached_sampling():
     clock = base.Clock()
     root = NodeModule(base.Constant(1), base.Constant(2))
+    root.unlock()  # To overwrite out
     assert root is not None
 
     out_mock = mock.MagicMock()
@@ -37,21 +38,21 @@ def test_cached_sampling():
     root.sample(clock, num_samples=10)
     root.sample(clock, num_samples=10)
 
+    assert list(root._call_cache.keys()) == [
+        ("_sample", (repr(clock), 10), root.get_cache_key())]
     assert out_mock.call_count == 1
-    assert list(root._sample_cache.keys()) == [
-        ((repr(clock), 10), root.get_cache_key())]
     
     root.sample(clock, num_samples=11)
     assert out_mock.call_count == 2
-    assert list(root._sample_cache.keys()) == [
-        ((repr(clock), 10), root.get_cache_key()),
-        ((repr(clock), 11), root.get_cache_key())]
+    assert list(root._call_cache.keys()) == [
+        ("_sample", (repr(clock), 10), root.get_cache_key()),
+        ("_sample", (repr(clock), 11), root.get_cache_key())]
 
 
-def test_iter_direct_submodules():
+def test_direct_submodules():
     trg = Node(base.Constant(2), base.Constant(3))
     root = Node(src=base.Constant(1), trg=trg)
-    actual = tuple(root._iter_direct_submodules())
+    actual = tuple(root._direct_submodules)
     expected = (("src", base.Constant(1)),
                 ("trg", trg))
     assert actual == expected
@@ -148,8 +149,6 @@ def test_prepend_past():
 
 def test_named_submodules():
 
-    raise pytest.skip("WIP")
-
     class Leaf(base.BaseModule):
         v: int
 
@@ -161,16 +160,54 @@ def test_named_submodules():
         trg=Node(Leaf(5), Leaf(6))
     )
 
-    expected_named_submodules = {
+    expected_submodules = {
         "src.src.src": Leaf(1),
         "src.src.trg.src": Leaf(2),
-        "src.src.trg.trg": Leaf(2),
+        "src.src.trg.trg": Leaf(3),
+        "src.trg": Leaf(4),
         "trg.src": Leaf(5),
         "trg.trg": Leaf(6),
     }
 
-    actual_named_submodules = root.named_submodules()
-    assert expected_named_submodules == actual_named_submodules
+    actual_submodules = root.find_submodules(cls=Leaf)
+    assert expected_submodules == actual_submodules
+
+
+def test_state():
+
+    class Leaf(base.BaseModule):
+        v: int
+        
+        def setup(self):
+            self._state_a = base.State(initial_value=self.v)
+            self._state_b = base.State(initial_value=self.v*10)
+
+    root = Node(
+        src=Node(
+            src=Node(src=Leaf(1), trg=Node(Leaf(2), Leaf(3))),
+            trg=Leaf(4)
+        ),
+        trg=Node(Leaf(5), Leaf(6))
+    )
+
+    expected_state = {
+        "src.src.src._state_a": 1,
+        "src.src.trg.src._state_a": 2,
+        "src.src.trg.trg._state_a": 3,
+        "src.trg._state_a": 4,
+        "trg.src._state_a": 5,
+        "trg.trg._state_a": 6,
+
+        "src.src.src._state_b": 10,
+        "src.src.trg.src._state_b": 20,
+        "src.src.trg.trg._state_b": 30,
+        "src.trg._state_b": 40,
+        "trg.src._state_b": 50,
+        "trg.trg._state_b": 60,
+    }
+
+    actual_state = {k: s._value for k, s in root.get_state_dict().items()}
+    assert expected_state == actual_state
 
 
 
