@@ -210,4 +210,49 @@ def test_state():
     assert expected_state == actual_state
 
 
+def _assert_outputs_similar(clock_signal, module_a, module_b):
+    out_a = module_a(clock_signal)
+    out_b = module_b(clock_signal)
+    np.testing.assert_allclose(out_a, out_b)
 
+
+@pytest.fixture(params=[128, 2048, 1234], ids=lambda s: f"num_samples={s}")
+def num_samples(request):
+    return request.param
+
+
+@pytest.fixture(params=[1, 2], ids=lambda c: f"num_channels={c}")
+def num_channels(request):
+    return request.param
+
+
+@pytest.fixture()
+def clock_signal(num_samples, num_channels):
+    clock = base.Clock(num_samples=num_samples, num_channels=num_channels)
+    clock_signal = clock()
+    assert clock_signal.shape == (num_samples, num_channels)
+    return clock_signal
+
+
+def test_math(clock_signal):
+    const_ten = base.Constant(10.)
+    const_five = base.Constant(5.)
+
+    # Test using a scalar and a module.
+    for other in (5., const_five):
+        _assert_outputs_similar(clock_signal, const_ten * other, base.Constant(50.))
+        _assert_outputs_similar(clock_signal, const_ten / other, base.Constant(2.))
+        _assert_outputs_similar(clock_signal, const_ten + other, base.Constant(15.))
+        _assert_outputs_similar(clock_signal, const_ten - other, base.Constant(5.))
+
+        _assert_outputs_similar(clock_signal, other * const_ten, base.Constant(50.))
+        _assert_outputs_similar(clock_signal, other / const_ten, base.Constant(0.5))
+        _assert_outputs_similar(clock_signal, other + const_ten, base.Constant(15.))
+        _assert_outputs_similar(clock_signal, other - const_ten, base.Constant(-5.))
+
+
+def test_math_name(clock_signal):
+    const_ten = base.Constant(10.)
+    const_five = base.Constant(5.)
+    result = const_ten + const_five
+    assert result.name == "Math(op=add, left=Constant, right=Constant)"

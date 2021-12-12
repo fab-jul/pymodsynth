@@ -1,4 +1,5 @@
 import dataclasses
+import operator
 import functools
 import collections
 import typing
@@ -15,6 +16,11 @@ class ClockSignal(NamedTuple):
     ts: np.ndarray
     sample_indices: np.ndarray
     sample_rate: float
+
+    def assert_same_shape(self, a: np.ndarray, module_name: str):
+        if a.shape != self.shape:
+            raise ValueError(
+                f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")  
 
     def zeros(self):
         return np.zeros_like(self.ts)
@@ -177,6 +183,10 @@ class BaseModule(metaclass=ModuleMeta):
 
     def unlock(self):
         self._locked = False
+        
+    @property
+    def name(self):
+        return self.__class__.__name__
 
     def __setattr__(self, name: str, value: Any) -> None:
         # TODO
@@ -315,25 +325,6 @@ class BaseModule(metaclass=ModuleMeta):
         yield
         self.set_state(state)
 
-
-class State:
-
-    def __init__(self, initial_value=None) -> None:
-        self._value = initial_value
-    
-    def get(self):
-        return self._value
-
-    def set(self, value):
-        self._value = value
-
-
-class Module(BaseModule):
-    """Root class for sound modules.
-
-    API contract: TODO
-    """
-
     def sample(self, clock: Clock, num_samples: int):
         def _sample():
             print("Sampling...")
@@ -351,15 +342,105 @@ class Module(BaseModule):
             inputs[name] = getattr(self, name).out(clock_signal)
         return self.out_given_inputs(clock_signal, **inputs)
 
-    def __call__(self, clock_signal: ClockSignal):
-        return self.out(clock_signal)
-
     def out_single_value(self, clock_signal: ClockSignal) -> float:
         return np.mean(self.out(clock_signal))
 
     def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
         raise NotImplementedError("Must be implemented by subclasses!")
 
+    def __call__(self, clock_signal: ClockSignal):
+        return self.out(clock_signal)
+
+    def __mul__(self, other):
+        """Implement module * scalar and module * module."""
+        return _MathModule(operator.mul, self, other)
+
+    def __rmul__(self, other):
+        """Implement scalar * module."""
+        return self * other
+
+    def __truediv__(self, other):
+        """Implement module / scalar and module / module"""
+        return _MathModule(operator.truediv, self, other)
+
+    def __rtruediv__(self, other):
+        return _MathModule(operator.truediv, other, self)
+
+    def __add__(self, other):
+        """Implement module + scalar and module + module"""
+        return _MathModule(operator.add, self, other)
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        """Implement module - scalar and module - module"""
+        return _MathModule(operator.sub, self, other)
+
+    def __rsub__(self, other):
+        return _MathModule(operator.sub, other, self)
+
+
+_Operator = Callable[[np.ndarray, np.ndarray], np.ndarray]
+
+
+class _MathModule(BaseModule):
+    """Implement various mathematical operations on modules, see base class."""
+
+    op: _Operator
+    left: BaseModule
+    right: BaseModule
+
+    @property
+    @functools.lru_cache()
+    def both_are_modules(self) -> bool:
+        return isinstance(self.left, Module) and isinstance(self.right, Module)
+
+    @property
+    def name(self):
+        # TODO: test
+        return f"Math(op={self.op.__name__}, left={self.left.name}, right={self.right.name})"
+
+    def out(self, clock_signal: ClockSignal):
+        left = self._maybe_call(self.left, clock_signal)
+        right = self._maybe_call(self.right, clock_signal)
+        result = self.op(left, right)
+        if self.both_are_modules:
+            clock_signal.assert_same_shape(result, self.name)
+        return result
+
+    @staticmethod
+    def _maybe_call(module_or_number, clock_signal: ClockSignal):
+        if isinstance(module_or_number, Module):
+            return module_or_number(clock_signal)
+        return module_or_number
+
+
+class State:
+    """Used to annotate state-ful parts of models."""
+
+    def __init__(self, initial_value=None) -> None:
+        self._value = initial_value
+    
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = value
+
+
+class Module(BaseModule):
+    """Root class for sound modules.
+
+    Same API as BaseModule except that we have a strict requirement that
+    the shape of the array returned by `out` must be the same as the
+    shape of `clock_signal`.
+    """
+
+    def __call__(self, clock_signal: ClockSignal):
+        result = self.out(clock_signal)
+        clock_signal.assert_same_shape(result, self.name)
+        return result
 
 # Use to annotate single values, TODO
 SingleValueModule = TypeVar("SingleValueModule", bound=Module)

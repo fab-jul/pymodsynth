@@ -1,7 +1,9 @@
-from mz import base  # TODO: private import to not pollute star imports!
+from mz import base
+from mz import helpers
 import numpy as np
 
 
+@helpers.mark_for_testing()
 class SineSource(base.Module):
     frequency: base.Module = base.Constant(440.)
     amplitude: base.Module = base.Constant(1.0)

@@ -1,7 +1,10 @@
 from mz import base
+import math
+from mz import helpers
 import scipy.signal
 import functools
 import numpy as np
+from numpy.polynomial import Polynomial
 
 
 @functools.lru_cache(maxsize=128)
@@ -25,6 +28,7 @@ def poly_fit(xs, ys, num_samples):
     return xs, ys
 
 
+@helpers.mark_for_testing(src=lambda: base.Constant(10.))
 class Reverb(base.Module):
 
     src: base.Module
@@ -39,7 +43,9 @@ class Reverb(base.Module):
                          echo: float,
                          p: float):
 
-        src = self.prepend_past("src", current=src, num_frames=2)
+        past_context = math.ceil(delay + echo)
+        num_frames = int(math.ceil(past_context / clock_signal.num_samples)) + 1
+        src = self.prepend_past("src", current=src, num_frames=num_frames)
 
         h = basic_reverb_ir(delay, echo, p)
 
