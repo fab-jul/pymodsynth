@@ -1,4 +1,5 @@
 import dataclasses
+import enum
 import operator
 import functools
 import collections
@@ -8,6 +9,7 @@ import contextlib
 import numpy as np
 
 from mz import helpers
+from mz import midi_lib
 
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, TypeVar, Union
 
@@ -179,10 +181,20 @@ class BaseModule(metaclass=ModuleMeta):
 
         # After this, no more assignements allowed.
         # TODO: Use to ensure hash makes sense
-        self._locked = True
+        self._locked = self._should_auto_lock
+
+    @property
+    def _should_auto_lock(self):
+        return True
 
     def unlock(self):
         self._locked = False
+
+    @contextlib.contextmanager
+    def unlocked(self):
+        self._locked = False
+        yield
+        self._locked = self._should_auto_lock
         
     @property
     def name(self):
@@ -299,7 +311,7 @@ class BaseModule(metaclass=ModuleMeta):
         return {name: m for name, m in self._iter_named_submodules()
                 if issubclass(m.__class__, cls)}
 
-    def get_params(self) -> Mapping[str, "BaseModule"]:
+    def get_params_dict(self) -> Mapping[str, "BaseModule"]:
         return self.find_submodules(cls=Parameter)
 
     def reset_state(self):
@@ -314,16 +326,18 @@ class BaseModule(metaclass=ModuleMeta):
                 state_dict[".".join((name, state_name))] = state
         return state_dict
         
-    def set_state(self, state):
-        # TODO
-        pass
+    def set_state_from_dict(self, state_dict):
+        _copy(state_dict, target=self.get_state_dict())
+
+    def set_params_from_dict(self, params_dict):
+        _copy(params_dict, target=self.get_params_dict())
 
     @contextlib.contextmanager
     def disable_state(self):
         state = self.get_state_dict()
         self.reset_state()
         yield
-        self.set_state(state)
+        self.set_state_from_dict(state)
 
     def sample(self, clock: Clock, num_samples: int):
         def _sample():
@@ -379,6 +393,22 @@ class BaseModule(metaclass=ModuleMeta):
 
     def __rsub__(self, other):
         return _MathModule(operator.sub, other, self)
+
+
+_GetAndSetModule = Union["Constant", "Parameter", "State"]
+
+
+def _copy(src: Mapping[str, _GetAndSetModule], target: Mapping[str, _GetAndSetModule]):
+    target = target.copy()
+    for k, param in src.items():
+        try:
+            target[k].set(param.get())
+        except KeyError as e:
+            print(f"Parameter {k} disappered, caught: {e}")
+        else:
+            target.pop(k)
+    if target:  # Some params were not set -> ignore.
+        pass  # TOOD: Log.
 
 
 _Operator = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -442,6 +472,7 @@ class Module(BaseModule):
         clock_signal.assert_same_shape(result, self.name)
         return result
 
+
 # Use to annotate single values, TODO
 SingleValueModule = TypeVar("SingleValueModule", bound=Module)
 
@@ -449,6 +480,13 @@ SingleValueModule = TypeVar("SingleValueModule", bound=Module)
 class Constant(Module):
     
     value: float
+
+    def set(self, value):
+        with self.unlocked():
+            self.value = value
+
+    def get(self):
+        return self.value
 
     def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
         # We provide a concrete get_cache_key implementation.
@@ -464,4 +502,52 @@ class Constant(Module):
 
 class Parameter(Constant):
 
-    pass
+    # Initial value
+    value: float
+    # Lowest sane value. Defaults to 0.1 * value.
+    lo: Optional[float] = None
+    # Highest sane value. Defaults to 1.9 * value.
+    hi: Optional[float] = None
+    # If given, a key on the keyboard that controls this parameter. Example: "f".
+    key: Optional[str] = None
+    # If given, a knob on a Midi controller that controls this parameter.
+    knob: Optional[midi_lib.KnobConvertible] = None
+    # Only used if `key` is set, in which case this sets how much
+    #   more we change the parameter if SHIFT is pressed on the keyboard.
+    shift_multiplier: float = 10
+    # If True, clip to [lo, hi] in `set`.
+    clip: bool = False
+
+    def setup(self):
+        if self.lo is None:
+            self.lo = 0.1 * self.value
+        if self.hi is None:
+            self.hi = 1.9 * self.value
+        if self.hi < self.lo:
+            raise ValueError
+        self.lo, self.hi = self.lo, self.hi
+        self.span = self.hi - self.lo
+
+    def set(self, value):
+        if self.clip:
+            self.value = np.clip(value, self.lo, self.hi)
+        else:
+            self.value = value
+
+    def set_relative(self, rel_value: float):
+        """Set with value in [0, 1], and we map to [lo, hi]."""
+        self.set(self.lo + self.span * rel_value)
+
+    def inc(self, diff):
+        """Increment value by `diff`."""
+        self.set(self.value + diff)
+
+    @property
+    def _should_auto_lock(self):
+        # Parameter should remain unlocked for easy value changes.
+        return False
+
+
+class FreqFactors(enum.Enum):
+    OCTAVE = 2.
+    STEP = 1.059463

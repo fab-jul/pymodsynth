@@ -210,6 +210,59 @@ def test_state():
     assert expected_state == actual_state
 
 
+def test_copy_state_and_params():
+
+    class Leaf(base.BaseModule):
+        v: int
+
+        def setup(self):
+            self.state = base.State(self.v)
+            self.param = base.Parameter(self.v * 10)
+
+    module_a = Node(
+        src=Node(
+            src=Node(src=Leaf(1), trg=Node(Leaf(2), Leaf(3))),
+            trg=Leaf(4)
+        ),
+        trg=Node(Leaf(5), Leaf(6))
+    )
+
+    module_b = Node(
+        src=Node(
+            src=Node(src=Leaf(-1), trg=Node(Leaf(-1), Leaf(-1))),
+            trg=Leaf(-1)
+        ),
+        trg=Node(Leaf(-1), Leaf(-1))
+    )
+
+    module_b.set_state_from_dict(module_a.get_state_dict())
+    module_b.set_params_from_dict(module_a.get_params_dict())
+
+    expected_state_values = {
+        "src.src.src.state": 1,
+        "src.src.trg.src.state": 2,
+        "src.src.trg.trg.state": 3,
+        "src.trg.state": 4,
+        "trg.src.state": 5,
+        "trg.trg.state": 6,
+    }
+
+    expected_param_values = {
+        "src.src.src.param": 10,
+        "src.src.trg.src.param": 20,
+        "src.src.trg.trg.param": 30,
+        "src.trg.param": 40,
+        "trg.src.param": 50,
+        "trg.trg.param": 60,
+    }
+
+    actual_state_values = {k: v.get() for k, v in module_b.get_state_dict().items()}
+    actual_param_values = {k: v.get() for k, v in module_b.get_params_dict().items()}
+    assert actual_state_values == expected_state_values
+    assert actual_param_values == expected_param_values
+
+
+
 def _assert_outputs_similar(clock_signal, module_a, module_b):
     out_a = module_a(clock_signal)
     out_b = module_b(clock_signal)
