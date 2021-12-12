@@ -97,8 +97,11 @@ class SignalWindow(mglw.WindowConfig):
 
         self.record_key = self._ascii_to_key("0")
 
-    def set_signal(self, signal):
+        self._suppl = []
+
+    def set_signal(self, signal, suppl):
         self._signal[:] = signal
+        self._suppl = suppl#[s[:len(self._signal)] for s in suppl]
 
     def _ascii_to_key(self, key_as_ascii: str):
         all_keys = vars(self.wnd.keys)
@@ -175,14 +178,22 @@ class SignalWindow(mglw.WindowConfig):
 
         # Only visualize first channel.
         signal = self._signal[:, 0]  # Shape: (num_samples,)
+        num_samples = len(signal)
         for subwindow, sig in self.iter_with_subwindow(
             # TODO: Could draw {1, ..., 4} signals here!
             # TODO: Order is opposite of what I want somehow...
             [signal, 
-             np.linspace(.8, .2, 2048),
-             np.linspace(.5, .1, 2048),
-             np.linspace(.2, .8, 2048)
+            *self._suppl,
+             #np.linspace(.8, .2, 2048),
+             #np.linspace(.5, .1, 2048),
+             #np.linspace(.2, .8, 2048)
              ]):
+            if len(sig.shape) == 2:
+                sig = sig[:, 0]
+            if len(sig) > num_samples:
+                sig = sig[:num_samples]
+            elif len(sig) < num_samples:
+                sig = np.concatenate((sig, np.zeros(num_samples - len(sig))), 0)
 
             # Reset vertices array's X axis.
             self.vertices[:, _SIGNAL_ARRAY_X] = self.x

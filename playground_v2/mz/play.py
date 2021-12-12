@@ -8,6 +8,7 @@ Also need moderngl and moderngl_window
 https://github.com/moderngl/moderngl-window
 """
 
+import itertools
 import collections
 import datetime
 import getpass
@@ -321,7 +322,8 @@ class SynthesizerController:
             else:
                 raise TypeError(event)
 
-        self.signal_window.set_signal(outdata)
+        self.signal_window.set_signal(outdata, suppl=list(
+            itertools.chain.from_iterable(m for m in self.output_gen._monitor_senders)))
         self.recorder.push(outdata)
 
 

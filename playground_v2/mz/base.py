@@ -1,4 +1,6 @@
 import dataclasses
+import itertools
+import weakref
 import enum
 import operator
 import functools
@@ -13,11 +15,22 @@ from mz import midi_lib
 
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, TypeVar, Union
 
+# TODO: Should cache calls with the same sample index! in BaseModule or similar
+
 
 class ClockSignal(NamedTuple):
     ts: np.ndarray
     sample_indices: np.ndarray
     sample_rate: float
+    clock: weakref.ref  # Clock
+
+    def get_clock(self):
+        return self.clock()
+
+    @classmethod
+    def test_signal(cls) -> "ClockSignal":
+        clock = Clock()
+        return clock()
 
     def assert_same_shape(self, a: np.ndarray, module_name: str):
         if a.shape != self.shape:
@@ -67,7 +80,7 @@ class Clock:
         ts = sample_indices / self.sample_rate
         # Broadcast `ts` into (num_samples, num_channels)
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
-        return ClockSignal(ts, sample_indices, self.sample_rate)
+        return ClockSignal(ts, sample_indices, self.sample_rate, clock=weakref.ref(self))
 
     def get_clock_signal_num_samples(self, num_samples: int):
         return self.get_clock_signal(np.arange(num_samples, dtype=int))
@@ -163,11 +176,16 @@ class BaseModule(metaclass=ModuleMeta):
         for field in dataclasses.fields(self):
             if field.type == SingleValueModule:  # TODO: won't work with reloading
                 single_value_modules.append(field.name)
-            elif safe_is_subclass(field.type, BaseModule):
-                other_modules.append(field.name)
+            else:
+                try:
+                    if issubclass(field.type, BaseModule):
+                        other_modules.append(field.name)
+                except TypeError:
+                    pass
         self._single_value_modules = single_value_modules
         self._other_modules = other_modules
 
+        self.monitor_sender = None
         self.setup()
 
         # TODO: Test
@@ -175,9 +193,15 @@ class BaseModule(metaclass=ModuleMeta):
             (name, a) for name, a in vars(self).items()
             if isinstance(a, BaseModule)]
 
+
         self._state_vars = [
             (name, a) for name, a in vars(self).items()
             if isinstance(a, State)]
+
+        self._named_submodules = None
+        self._monitor_senders = [m.monitor_sender for _, m in self._cached_named_submodules
+                                 if m.monitor_sender is not None]
+        print(self.__class__.__name__, self._monitor_senders, [k for k, _ in self._cached_named_submodules])
 
         # After this, no more assignements allowed.
         # TODO: Use to ensure hash makes sense
@@ -192,9 +216,10 @@ class BaseModule(metaclass=ModuleMeta):
 
     @contextlib.contextmanager
     def unlocked(self):
+        initial = self._locked
         self._locked = False
         yield
-        self._locked = self._should_auto_lock
+        self._locked = initial
         
     @property
     def name(self):
@@ -217,7 +242,8 @@ class BaseModule(metaclass=ModuleMeta):
             # Note that this means that collisions can occur
             # if callers use this function on the same function name.
             key = (fn.__name__, key_prefix, self.get_cache_key())
-        except NoCacheKeyError:
+        except NoCacheKeyError as e:
+            print("NoCacheKeyError", e)
             key = None
 
         if key and key in self._call_cache:
@@ -260,13 +286,16 @@ class BaseModule(metaclass=ModuleMeta):
         return frame_buffer.get()
 
     def _get_cache_key_recursive(self) -> Sequence[Tuple[str, Any]]:
+        if not self._direct_submodules:
+            return []
+
         output = []
         for name, module in self._direct_submodules:
             output += [(name + "." + key, value) 
                        # Go into recursion.
                        for key, value in module.get_cache_key()]
         if not output:
-            raise NoCacheKeyError()
+            raise NoCacheKeyError(f"No cache key for {self.name}: {self._direct_submodules}")
         return tuple(output)
 
     def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
@@ -291,24 +320,35 @@ class BaseModule(metaclass=ModuleMeta):
     # STATE: use explicit initial value, use find_submodules with all,
     # then get their state.
 
+    @property
+    def _cached_named_submodules(self):
+        if self._named_submodules is None:
+            with self.unlocked():
+                self._named_submodules = list(self._iter_named_submodules())
+        return self._named_submodules
+
     def _iter_named_submodules(self,
                                memo: Optional[Set["BaseModule"]] = None,
                                prefix: str = "") -> Iterable[Tuple[str, "BaseModule"]]:
-        # `memo` is used to make sure we count everything at most once.
-        if memo is None:
-            memo = set()
-        if self not in memo:
-            yield prefix, self
-            for name, module in self._direct_submodules:
-                submodule_prefix = prefix + ("." if prefix else "") + name
-                for p, m in module._iter_named_submodules(memo, submodule_prefix):
-                    yield p, m
+            # `memo` is used to make sure we count everything at most once.
+            if memo is None:
+                memo = set()
+            try:  # TODO: DITCH THIS STUFF!!!
+                _ = self in memo
+            except TypeError:
+                raise ValueError(self, self.__class__)
+            if self not in memo:
+                yield prefix, self
+                for name, module in self._direct_submodules:
+                    submodule_prefix = prefix + ("." if prefix else "") + name
+                    for p, m in module._iter_named_submodules(memo, submodule_prefix):
+                        yield p, m
 
     def find_submodules(self, cls=None) -> Mapping[str, "BaseModule"]:
         """Return all submodules, optionally filtering by `cls`."""
         if not cls:
             cls = BaseModule
-        return {name: m for name, m in self._iter_named_submodules()
+        return {name: m for name, m in self._cached_named_submodules
                 if issubclass(m.__class__, cls)}
 
     def get_params_dict(self) -> Mapping[str, "BaseModule"]:
@@ -321,7 +361,7 @@ class BaseModule(metaclass=ModuleMeta):
     def get_state_dict(self) -> Mapping[str, "BaseModule"]:
         # Get all modules, then ask them for their state.
         state_dict = {}
-        for name, m in self._iter_named_submodules():
+        for name, m in self._cached_named_submodules:
             for state_name, state in m._state_vars:
                 state_dict[".".join((name, state_name))] = state
         return state_dict
@@ -344,7 +384,7 @@ class BaseModule(metaclass=ModuleMeta):
             print("Sampling...")
             with self.disable_state():
                 clock_signal = clock.get_clock_signal_num_samples(num_samples)
-                result = self.out(clock_signal)
+                return self.out(clock_signal)
 
         return self.cached_call(key_prefix=(repr(clock), num_samples), fn=_sample)
 
@@ -357,7 +397,9 @@ class BaseModule(metaclass=ModuleMeta):
         return self.out_given_inputs(clock_signal, **inputs)
 
     def out_single_value(self, clock_signal: ClockSignal) -> float:
-        return np.mean(self.out(clock_signal))
+        o = self.out(clock_signal)
+        assert isinstance(o, np.ndarray), o
+        return np.mean(o)
 
     def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
         raise NotImplementedError("Must be implemented by subclasses!")
@@ -393,6 +435,47 @@ class BaseModule(metaclass=ModuleMeta):
 
     def __rsub__(self, other):
         return _MathModule(operator.sub, other, self)
+
+    def __pow__(self, other):
+        return _MathModule(operator.pow, self, other)
+
+    def __rpow__(self, other):
+        return _MathModule(operator.pow, other, self)
+
+
+class CacheableBaseModule(BaseModule):
+
+    def __post_init__(self):
+        self._last_output_idx = State()
+        self._last_output = State()
+        super().__post_init__()
+
+    def cached_out(self, clock_signal: ClockSignal):
+        if (self._last_output_idx.is_set and
+                self._last_output_idx.get() == clock_signal.sample_indices[0]):
+            print("Using cached output...")
+            return self._last_output.get()
+        output = self.out(clock_signal)
+        self._last_output.set(output)
+        self._last_output_idx.set(clock_signal.sample_indices[0])
+        return output
+
+
+class MultiOutputModule(CacheableBaseModule):
+
+    def output(self, output_name: str):
+        return _OutputSelector(self, output_name)
+
+
+class _OutputSelector(BaseModule):
+
+    src: MultiOutputModule
+    output_name: str
+
+    def out(self, clock_signal):
+        real_out = self.src.cached_out(clock_signal)
+        assert isinstance(real_out, dict)  # TODO
+        return real_out[self.output_name]
 
 
 _GetAndSetModule = Union["Constant", "Parameter", "State"]
@@ -441,7 +524,7 @@ class _MathModule(BaseModule):
 
     @staticmethod
     def _maybe_call(module_or_number, clock_signal: ClockSignal):
-        if isinstance(module_or_number, Module):
+        if isinstance(module_or_number, BaseModule):
             return module_or_number(clock_signal)
         return module_or_number
 
@@ -457,6 +540,10 @@ class State:
 
     def set(self, value):
         self._value = value
+
+    @property
+    def is_set(self) -> bool:
+        return self._value is not None
 
 
 class Module(BaseModule):
@@ -523,8 +610,9 @@ class Parameter(Constant):
             self.lo = 0.1 * self.value
         if self.hi is None:
             self.hi = 1.9 * self.value
-        if self.hi < self.lo:
-            raise ValueError
+        # TODO: Does not handle negative values!
+#        if self.hi < self.lo:
+#            raise ValueError(f"Invalid lo, hi == ({self.lo}, {self.hi})")
         self.lo, self.hi = self.lo, self.hi
         self.span = self.hi - self.lo
 
@@ -548,6 +636,41 @@ class Parameter(Constant):
         return False
 
 
+class BlockFutureCache:
+    """Future cache for blocks."""
+
+    def __init__(self):
+        self._cache = None
+
+    def get(self, num_samples, future: np.ndarray):
+        if self._cache is None:
+            self._cache = future
+        else:
+            assert len(self._cache.shape) == len(future.shape)
+
+        while self._cache.shape[0] <= (num_samples + 1):
+            # TODO: Could be faster probably.
+            self._cache = np.concatenate((self._cache, future), axis=0)
+
+        output = self._cache[:num_samples, ...]
+        self._cache = self._cache[num_samples:, ...]
+        return output
+
+
+
+
 class FreqFactors(enum.Enum):
     OCTAVE = 2.
     STEP = 1.059463
+
+
+class MonitorSender:
+
+    def __init__(self):
+        self._signals = {}
+
+    def set(self, key, value):
+        self._signals[key] = value
+
+    def __iter__(self):
+        return iter(self._signals.values())

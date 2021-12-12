@@ -13,7 +13,7 @@ import pytest
 
 
 @pytest.fixture(params=helpers.iter_marked_classes(),
-                ids=lambda cls: cls.__class__.__name__)
+                ids=lambda marked_class: marked_class.name)
 def marked_class(request):
     return request.param
 

@@ -88,6 +88,10 @@ class MarkedClass:
         self.cls = cls
         self.kwargs = kwargs
 
+    @property
+    def name(self):
+        return self.cls.__name__
+
     def get_instance(self):
         try:
             return self.cls(

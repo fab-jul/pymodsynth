@@ -1,3 +1,8 @@
+import functools
+
+from typing import Optional, Sequence, Union, Tuple
+import collections
+import dataclasses
 from mz import base
 from mz import helpers
 import numpy as np
@@ -22,3 +27,158 @@ class SineSource(base.Module):
         self._last_cumsum_value.set(cumsum[-1, :])
         out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
         return out
+
+
+class Periodic(base.Module):
+
+    def setup(self):
+        self._signal = base.State()
+        self._future = base.State(base.BlockFutureCache())
+
+    def set_signal(self, signal: np.ndarray):
+        self._signal.set(signal)
+
+    def out(self, clock_signal: base.ClockSignal):
+        signal = self._signal.get()
+        if signal is None:
+            return clock_signal.zeros()
+        future: base.BlockFutureCache = self._future.get()
+        output = future.get(num_samples=clock_signal.num_samples, future=signal)
+        if len(output.shape) != 2:
+            output = np.broadcast_to(output.reshape(-1, 1), clock_signal.shape)
+        return output
+
+
+#class Melody(base.BaseModule):
+#    melody: Sequence[Note]
+
+
+class SamplesToTriggers(base.Module):
+
+    def out(self, clock_signal: base.ClockSignal):
+        sample = self.sampler.sample(clock_signal.get_clock(), 
+                                     num_samples=5000)  # TODO: should be internal somehow I think
+ 
+
+class TriggerModulator(base.Module):
+    """
+    Simplified OldTriggerModulator. Put an envelope on a trigger track.
+    Stateful:
+    Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
+    Combine overlaps with a suitable function: max, fst, snd, add, ...
+    """
+
+    sampler: base.Module
+    triggers: base.Module
+    combinator: base._Operator = np.add
+
+    def setup(self):
+        self.previous = base.State()
+        self.monitor_sender = base.MonitorSender()
+
+    def out(self, clock_signal: base.ClockSignal):
+        """Generate one sample per trigger"""
+        trigger_indices = np.nonzero(self.triggers(clock_signal))[0]
+        sample = self.sampler.sample(clock_signal.get_clock(), num_samples=5000)  # TODO
+        self.monitor_sender.set("sample", sample)
+        envelopes = [sample for _ in trigger_indices]
+        current_signal = clock_signal.zeros()
+        if self.previous.is_set and len(self.previous.get()) > 0:
+            previous_signal = self.previous.get()
+        else:
+            previous_signal = clock_signal.zeros()
+        if envelopes:
+            # does any envelope go over frame border?
+            latest_envelope_end = max(i + len(env) for i, env in zip(trigger_indices, envelopes))
+            if latest_envelope_end > clock_signal.num_samples:
+                remainder = latest_envelope_end - clock_signal.num_samples
+            else:
+                remainder = 0
+            current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
+            for i, envelope in zip(trigger_indices, envelopes):
+                current_signal[i:i + len(envelope)] = envelope.reshape((-1, 1))
+                # plt.plot(envelope)
+                # plt.show()
+        # combine the old and new signal using the given method
+        max_len = max(len(previous_signal), len(current_signal))
+        previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
+        current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+        result = self.combinator(previous_signal, current_signal)
+        self.previous.set(result[len(clock_signal.ts):])
+        res = result[:len(clock_signal.ts)]
+        return res
+
+       
+
+
+@dataclasses.dataclass(unsafe_hash=True)
+class Pattern:
+    """Input to TriggerSource."""
+    # Beginning of notes. Use 0 to indicate pause, and 1... to indicate notes relative
+    # to a base frequency, where 1 == the base frequency, and 13 == the base frequency but one octave higher.
+    # Examples: [1, 0, 0, 0, 1, 0, 0, 0], [1, 4, 7]
+    pattern: Tuple[float, ...]
+    # What each note in `pattern` represents.
+    note_value: float = 1/4 # 1/4, 1/8, etc.
+    # How long to hold each note in `pattern`, in terms of `note_value`
+    note_lengths: Union[int, Tuple[int, ...]] = 1  
+
+    def __post_init__(self):
+        self.pattern = tuple(self.pattern)
+        # TODO: broadcast note_lengths
+
+    def to_triggers(self, bpm, sample_rate):
+        assert self.note_value >= 1/4  # TODO
+        samples_per_forth = round(sample_rate / (bpm / 60))  # number of samples between 1/4 triggers
+        sampler_per_pattern_element = round(samples_per_forth * 4 * self.note_value)
+
+        broadcaster = np.zeros(sampler_per_pattern_element)
+        broadcaster[0] = 1
+
+        pattern_as_01 = [int(p > 0.5) for p in self.pattern]
+        triggers = (np.array(pattern_as_01).reshape(-1, 1) * broadcaster).flatten()
+        return triggers
+
+
+class MelodySequencer(base.MultiOutputModule):
+
+    bpm: base.SingleValueModule
+    pattern: Pattern
+
+    def setup(self):
+        self.periodic = Periodic()
+        self.note = base.Constant(220)  # TODO
+        self.hold = base.Constant(512)
+
+    def out(self, clock_signal: base.ClockSignal):
+        bpm: float = self.bpm.out_single_value(clock_signal)
+        pattern_in_sample_space = self.pattern.to_triggers(bpm, clock_signal.sample_rate)
+        self.periodic.set_signal(pattern_in_sample_space)
+        return {
+            "triggers": self.periodic(clock_signal),
+            "note": self.note(clock_signal),
+            "hold": self.hold(clock_signal),
+            }
+
+
+def main():
+    from mz.experimental import subplots
+    import matplotlib.pyplot as plt
+
+    s = StepSequencer(SineSource())
+    a = s.output("foo")
+    b = s.output("bar")
+
+    c = a + b
+
+    s = base.ClockSignal.test_signal()
+    print(a(s), b(s))
+
+    #pattern = Pattern([1, 0, 1, 0], note_values=1/4)
+    #s = subplots.Subplots(nrows=3)
+    #s.next_ax().plot(pattern.to_triggers(160, 44100))
+    #plt.show()
+
+
+if __name__ == "__main__":
+    main()

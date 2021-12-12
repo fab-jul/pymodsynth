@@ -49,6 +49,53 @@ def test_cached_sampling():
         ("_sample", (repr(clock), 11), root.get_cache_key())]
 
 
+def test_cacheable_base_module():
+
+    class M(base.CacheableBaseModule):
+
+        def out(self, clock_signal):
+            return clock_signal.zeros()
+
+    m = M()
+    m.unlock()
+    out_mock = mock.MagicMock()
+    out_mock.side_effect = m.out
+    m.out = out_mock
+
+    signal = base.ClockSignal.test_signal()
+    m.cached_out(signal)
+    assert out_mock.call_count == 1
+    m.cached_out(signal)
+    assert out_mock.call_count == 1
+    m.cached_out(signal)
+    assert out_mock.call_count == 1
+
+    signal.sample_indices[0] += 1
+    m.cached_out(signal)
+    assert out_mock.call_count == 2
+
+
+class test_multi_output_module():
+
+    class M(base.MultiOutputModule):
+
+        def out(self, clock_signal):
+            return {"foo": clock_signal.zeros() + 1,
+                    "bar": clock_signal.zeros() + 10}
+
+    m = M()
+    signal = base.ClockSignal.test_signal()
+    foo = m.output("foo")
+    bar = m.output("bar")
+    foo_out = foo(signal)
+    assert foo_out[0, 0] == 1
+
+    final = foo + bar
+
+    final_out = final(signal)
+    assert final_out[0, 0] == 11
+
+
 def test_direct_submodules():
     trg = Node(base.Constant(2), base.Constant(3))
     root = Node(src=base.Constant(1), trg=trg)
@@ -56,6 +103,7 @@ def test_direct_submodules():
     expected = (("src", base.Constant(1)),
                 ("trg", trg))
     assert actual == expected
+
 
 def test_cache_key():
     root = Node(
@@ -107,9 +155,9 @@ def test_is_subclass():
 
 def test_prepend_past():
 
-    class M(base.Module):
+    class M(base.BaseModule):
 
-        src: base.Module
+        src: base.BaseModule
         _src_prepended: List[np.ndarray] = dataclasses.field(default_factory=list)
 
         def out_given_inputs(self, clock_signal, src):
@@ -117,10 +165,10 @@ def test_prepend_past():
                 self.prepend_past("src", src, num_frames=3))
             return src
 
-    class ArangeSource(base.Module):
+    class ArangeSource(base.BaseModule):
 
         def out(self, clock_signal: base.ClockSignal):
-            return clock_signal.sample_indices
+            return clock_signal.sample_indices 
             
     m = M(src=ArangeSource())
     clock = base.Clock(num_samples=4, num_channels=2, sample_rate=1)
@@ -262,7 +310,6 @@ def test_copy_state_and_params():
     assert actual_param_values == expected_param_values
 
 
-
 def _assert_outputs_similar(clock_signal, module_a, module_b):
     out_a = module_a(clock_signal)
     out_b = module_b(clock_signal)
@@ -297,15 +344,38 @@ def test_math(clock_signal):
         _assert_outputs_similar(clock_signal, const_ten / other, base.Constant(2.))
         _assert_outputs_similar(clock_signal, const_ten + other, base.Constant(15.))
         _assert_outputs_similar(clock_signal, const_ten - other, base.Constant(5.))
+        _assert_outputs_similar(clock_signal, const_ten ** other, base.Constant(10**5.))
 
         _assert_outputs_similar(clock_signal, other * const_ten, base.Constant(50.))
         _assert_outputs_similar(clock_signal, other / const_ten, base.Constant(0.5))
         _assert_outputs_similar(clock_signal, other + const_ten, base.Constant(15.))
         _assert_outputs_similar(clock_signal, other - const_ten, base.Constant(-5.))
+        _assert_outputs_similar(clock_signal, other ** const_ten, base.Constant(5**10))
 
 
-def test_math_name(clock_signal):
+def test_math_name():
     const_ten = base.Constant(10.)
     const_five = base.Constant(5.)
     result = const_ten + const_five
     assert result.name == "Math(op=add, left=Constant, right=Constant)"
+
+
+def test_math_out():
+    const_ten = base.Constant(10.)
+    const_five = base.Constant(5.)
+    result = const_ten + const_five
+    signal = base.ClockSignal.test_signal()
+    out = result(signal)
+    assert out.shape == signal.shape
+
+
+def test_block_future_cache():
+    c = base.BlockFutureCache()
+    o = c.get(num_samples=10, future=np.array([1, 2, 3]))
+    assert o.tolist() == [1, 2, 3, 1, 2, 3, 1, 2, 3, 1]
+    assert c._cache.tolist()[:2] == [2, 3]
+
+    c = base.BlockFutureCache()
+    o = c.get(num_samples=2, future=np.array([1, 2, 3]))
+    assert o.tolist() == [1, 2]
+    assert c._cache.tolist()[0] == 3
