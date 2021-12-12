@@ -219,6 +219,9 @@ class Module:
     def get_params_by_name(self) -> MutableMapping[str, "Parameter"]:
         return self._get(Parameter)
 
+    def get_kbinputs_by_name(self) -> MutableMapping[str, "KBInput"]:
+        return self._get(KBInput)
+
     def get_states_by_name(self) -> MutableMapping[str, "State"]:
         return self._get(State)
 
@@ -449,7 +452,21 @@ class Parameter(Constant):
         self.set(self.lo + self.span * rel_value)
 
 
+class KBInput(Module):
+    """1 when key is pressed, 0 otherwise"""
+
+    __special_name__ = "KBInput"
+
+    def __init__(self, key: str):
+        self.key = key
+        self.state = 0  # 0 not pressed, 1 pressed
+
+    def out(self, clock_signal: ClockSignal) -> np.ndarray:
+        return clock_signal.zeros() + self.state
+
+
 P = Parameter
+
 
 @tests_helper.mark_for_testing()
 class Random(Module):

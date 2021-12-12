@@ -18,6 +18,11 @@ class KeyAndMouseEvent(typing.NamedTuple):
     shift_is_on: bool
 
 
+class KBInputEvent(typing.NamedTuple):
+    key: str
+    state: bool
+
+
 class RecordKeyPressedEvent:
     pass
 
@@ -37,6 +42,7 @@ class SignalWindow(mglw.WindowConfig):
 
         # Map BaseKey -> ASCII, e.g., {wnd.keys.A: "A"}
         self._interesting_keys = {}
+        self._interesting_kbinput_keys = {}
         self._modifiers = {}
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
@@ -79,9 +85,22 @@ class SignalWindow(mglw.WindowConfig):
     def set_interesting_keys(self, keys_as_ascii: typing.Iterable[str]):
         self._interesting_keys = {self._ascii_to_key(k): k for k in keys_as_ascii}
 
+    def set_interesting_kbinput_keys(self, keys_as_ascii: typing.Iterable[str]):
+        print(keys_as_ascii)
+        self._interesting_kbinput_keys = {self._ascii_to_key(k): k for k in keys_as_ascii}
+
     def key_event(self, key, action, modifiers):
+        print(key)
         if key == self.record_key and action == self.wnd.keys.ACTION_RELEASE:
             self._event_queue.append(RecordKeyPressedEvent())
+        if key in self._interesting_kbinput_keys:
+            ascii_key = self._interesting_kbinput_keys[key]
+            if action == self.wnd.keys.ACTION_PRESS:
+                print(f"{ascii_key} on")
+                self._event_queue.append(KBInputEvent(ascii_key, True))
+            if action == self.wnd.keys.ACTION_RELEASE:
+                print(f"{ascii_key} off")
+                self._event_queue.append(KBInputEvent(ascii_key, False))
         if key not in self._interesting_keys:
             return
         # Key presses

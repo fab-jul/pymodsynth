@@ -6,7 +6,7 @@ import operator
 from numpy.polynomial import Polynomial
 
 from playground.modules import ClockSignal, Clock, Module, Parameter, Random, SineSource, SawSource, TriangleSource, \
-    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer, ButterworthFilter
+    SAMPLING_FREQUENCY, NoiseSource, Constant, Id, FreqFactors, FrameBuffer, ButterworthFilter, KBInput
 import random
 import numpy as np
 from typing import Dict, List, NamedTuple, Callable, Union
@@ -572,7 +572,11 @@ class MultiNote(Module):
 class MultiNoteTest(Module):
     def __init__(self):
         bpm = Parameter(120, key="b")
-        self.out = MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3)
+        notes = []
+        for i, key in enumerate(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]):
+            kbinp = KBInput(key)
+            notes.append(kbinp * SineSource(P(220.0 * FreqFactors.STEP.value ** i)))
+        self.out = MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3) + sum(notes)
 
 
 class MultiSourceTest(Module):

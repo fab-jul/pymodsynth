@@ -38,6 +38,8 @@ from playground import rhythm
 
 # Can contain:
 # - KeyAndMouseEvent
+from playground.modules import KBInput
+
 EVENT_QUEUE = collections.deque(maxlen=100)
 
 
@@ -145,6 +147,7 @@ class SynthesizerController:
 
         # Set defaults.
         self.params: typing.Dict[str, modules.Parameter] = {}
+        self.kbinputs: typing.Dict[str, modules.KBInput] = {}
         self.state: typing.Dict[str, modules.State] = {}
         self.key_mapping: typing.Dict[str, modules.Parameter] = {}
         self.knob_mapping: typing.Dict[midi_lib.Knob, modules.Parameter] = {}
@@ -238,12 +241,14 @@ class SynthesizerController:
         """Called on init and when `self.modules_file_name` changes."""
         self.output_gen = output_gen
         self.params = self.output_gen.get_params_by_name()
+        self.kbinputs = self.output_gen.get_kbinputs_by_name()
         self.state = self.output_gen.get_states_by_name()
         self._update_key_mapping()
         self._update_knob_mapping()
 
     def _update_key_mapping(self):
         self.key_mapping = {}
+        print("sdf", self.params.values())
         for param in set(self.params.values()):
             if not param.key:
                 continue
@@ -251,8 +256,19 @@ class SynthesizerController:
                 print(f"*** Duplicate key, `{param.key}` already used! Ignoring...", file=sys.stderr)
                 continue
             self.key_mapping[param.key] = param
+        self.kbinput_key_mapping = {}
+        print("sdfa;lkjhfdsahudf", set(self.kbinputs.values()))
+        for kbinput in set(self.kbinputs.values()):
+            if not kbinput.key:
+                continue
+            if kbinput.key in self.kbinput_key_mapping:
+                print(f"*** Duplicate key, `{kbinput.key}` already used! Ignoring kbinput...", file=sys.stderr)
+                continue
+            self.kbinput_key_mapping[kbinput.key] = kbinput
         print("Did update keymapping, keys=", self.key_mapping.keys())
+        print("Did update kbinputkeymapping, keys=", self.kbinput_key_mapping.keys())
         self.signal_window.set_interesting_keys(self.key_mapping.keys())
+        self.signal_window.set_interesting_kbinput_keys(self.kbinput_key_mapping.keys())
 
     def _update_knob_mapping(self):
         if not self.midi_controller:
@@ -326,6 +342,11 @@ class SynthesizerController:
             elif isinstance(event, window_lib.RecordKeyPressedEvent):
                 is_recording = self.recorder.toggle_is_recording()
                 print("Recording:", is_recording)
+
+            elif isinstance(event, window_lib.KBInputEvent):
+                key, state = event
+                kbinput_module: KBInput = self.kbinput_key_mapping[key]
+                kbinput_module.state = state
 
             else:
                 raise TypeError(event)
