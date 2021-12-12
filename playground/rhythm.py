@@ -545,7 +545,7 @@ class MultiNote(Module):
                                         [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64, 3 / 64], k=8)
                               )
         base_freq = Parameter(220, key='f')
-        base_phase = Parameter(2 * np.pi, key="p")
+        base_phase = Parameter(2 * np.pi, key="m")
         for i in range(num_overtones):
             phase_factor = base_phase * random.random()
             amp_factor = 1/(1+i)
@@ -572,17 +572,27 @@ class MultiNote(Module):
 class MultiNoteTest(Module):
     def __init__(self):
         bpm = Parameter(120, key="b")
-        notes = []
-        for i, key in enumerate(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]):
-            kbinp = KBInput(key)
-            notes.append(kbinp * SineSource(P(220.0 * FreqFactors.STEP.value ** i)))
-        self.out = MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3) + sum(notes)
+        # notes = []
+        # for i, key in enumerate(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]):
+        #     kbinp = KBInput(key)
+        #     notes.append(kbinp * SineSource(P(220.0 * FreqFactors.STEP.value ** i)))
+        self.n1 = KBInput("q") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 0))
+        self.n2 = KBInput("w") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 1))
+        self.n3 = KBInput("e") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 2))
+        self.n4 = KBInput("r") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 3))
+        self.n5 = KBInput("t") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 4))
+        self.n6 = KBInput("y") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 5))
+        self.n7 = KBInput("u") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 6))
+        self.n8 = KBInput("i") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 7))
+        self.n9 = KBInput("o") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 8))
+
+        self.out = 0*MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3) + self.n1 + self.n2 + self.n3 + self.n4 + self.n5 + self.n6 + self.n7 + self.n8 + self.n9
 
 
 class MultiSourceTest(Module):
     def __init__(self):
         self.src = MultiSource(base_frequency=Parameter(220, key='f'), source=SineSource, num_overtones=100)
-        self.out = ButterworthFilter(self.src, f_low=P(10, key="o"), f_high=P(5000, key="p"), mode="bp")
+        self.out = ButterworthFilter(self.src, f_low=P(10, key="n"), f_high=P(5000, key="m"), mode="bp")
 
 
 class HoldTest(Module):

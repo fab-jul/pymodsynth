@@ -220,7 +220,9 @@ class Module:
         return self._get(Parameter)
 
     def get_kbinputs_by_name(self) -> MutableMapping[str, "KBInput"]:
-        return self._get(KBInput)
+        out = self._get(KBInput)
+        print("abc", out)
+        return out
 
     def get_states_by_name(self) -> MutableMapping[str, "State"]:
         return self._get(State)
