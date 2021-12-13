@@ -126,16 +126,12 @@ def test_cache_key():
 
     assert root.get_cache_key() == expected_cache_key
 
-
-def test_cache_key_raises():
-
+    # A module without any children should not rais.e
     class NoCacheKeyModule(base.Module):
         pass
 
     root = Node(src=base.Constant(1), trg=NoCacheKeyModule())
-
-    with pytest.raises(base.NoCacheKeyError):
-        root.get_cache_key()
+    root.get_cache_key()
 
 
 def test_is_subclass():

@@ -333,16 +333,16 @@ class BaseModule(metaclass=ModuleMeta):
             # `memo` is used to make sure we count everything at most once.
             if memo is None:
                 memo = set()
-            try:  # TODO: DITCH THIS STUFF!!!
-                _ = self in memo
-            except TypeError:
-                raise ValueError(self, self.__class__)
-            if self not in memo:
-                yield prefix, self
-                for name, module in self._direct_submodules:
-                    submodule_prefix = prefix + ("." if prefix else "") + name
-                    for p, m in module._iter_named_submodules(memo, submodule_prefix):
-                        yield p, m
+            # TODO: Add unit test.
+            if id(self) in memo:
+                print("DUPLICATES", id(self), memo)
+                return
+            memo.add(id(self))
+            yield prefix, self
+            for name, module in self._direct_submodules:
+                submodule_prefix = prefix + ("." if prefix else "") + name
+                for p, m in module._iter_named_submodules(memo, submodule_prefix):
+                    yield p, m
 
     def find_submodules(self, cls=None) -> Mapping[str, "BaseModule"]:
         """Return all submodules, optionally filtering by `cls`."""

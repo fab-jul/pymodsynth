@@ -25,8 +25,7 @@ class Testing(mz.Module):
         )
 
         self.sampler = _SimpleNoteSampler(
-            src=mz.SineSource(frequency=mz.Constant(220)),# **
-                              #(mz.FreqFactors.STEP.value * self.seq.output("note"))),
+            src=mz.SineSource(frequency=220 ** (mz.FreqFactors.STEP.value * self.seq.output("note"))),
             env=mz.ADSREnvelopeGenerator(hold=self.seq.output("hold"))
         )
 
