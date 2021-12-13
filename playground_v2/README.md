@@ -140,6 +140,8 @@ class Foo(mz.Module):
             self.foo = np.mean(bar)  # Ok - but DISCOURAGED! Use mz.State instead.
 ```
 
+_Option 3_: (even more discouraged): A module that may overwrite `_should_auto_lock(self)` with `return False`.
+
 ### Implementation Details
 
 TODO
