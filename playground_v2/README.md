@@ -37,7 +37,10 @@ class SineSource(mz.Module):
    the module attributes.
 3. Any variables that change in `out` must be `mz.State` variables! These are just very light wrappers around arbirary python types, so you may
    use whatever you like, e.g., lists.
-4. To define an `out` implementation, the simplest is to define `out_given_inputs`, which takes a `clock_signal` and each of the _`Modules`_ variables
+4. To define an `out` implementation, the simplest is to define `out_given_inputs`, which takes a `clock_signal` and an
+   argument of the _`Modules`_ variables. The value of that will be set to the output of the Module. Note for example
+   how `frequency` is specified to be an arbirary `mz.Module`, but `out_given_inputs` gets `frequency: np.ndarray`,
+   i.e., it gets `self.frequency(clock_signal)` directly.
 
 
 #### Reverb: `SingleValueModule` and `prepend_past`
@@ -111,9 +114,9 @@ class Foo(mz.Module):
         self.foo = np.mean(bar)  # Will raise an exception because we assign to self.
 ```
 
-There are two alternatives:
+There are a few alternatives:
 
-_Option 1_: (preferred): Use `mz.State` for variables that need to change, and create a placeholder in `setup`. The above example would be:
+_Option 1_: (preferred): Use `mz.State` for variables that need to change, and create a placeholder in `setup`. The above example would become:
 
 ```python
 class Foo(mz.Module):
