@@ -1,12 +1,12 @@
 from mz import base
-import math
 from mz import helpers
+from mz import sources
+
+import math
 import scipy.signal
 import functools
 import numpy as np
 from numpy.polynomial import Polynomial
-
-from mz import sources
 
 
 @functools.lru_cache(maxsize=128)
@@ -71,18 +71,20 @@ class ButterworthFilter(base.Module):
     order: int = 10
         
     def setup(self):
-        self._last_signal = base.State()
+        # TODO: Use prepend_past
+        self._last_signal = base.Stateful()
 
-    def out_given_inputs(self, clock_signal: base.ClockSignal, inp, f_low: float, f_high: float):
-        if not self._last_signal.is_set:
-            self._last_signal.set(clock_signal.zeros())
+    def out_given_inputs(self, clock_signal: base.ClockSignal, 
+                         inp, f_low: float, f_high: float):
+        if self._last_signal is None:
+            self._last_signal = clock_signal.zeros()
         num_samples, num_channels = clock_signal.shape
 
         f_low = np.clip(f_low, 1e-10, clock_signal.sample_rate/2)
         f_high = np.clip(f_high, 1e-10, clock_signal.sample_rate/2)
 
-        full_signal = np.concatenate((self._last_signal.get(), inp), axis=0)
-        self._last_signal.set(inp)
+        full_signal = np.concatenate((self._last_signal, inp), axis=0)
+        self._last_signal = inp
 
         fs = {"lp": f_low, "hp": f_high, "bp": (f_low, f_high)}[self.mode]
         sos = _get_me_some_butter(self.order, fs, self.mode, int(clock_signal.sample_rate))

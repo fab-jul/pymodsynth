@@ -15,7 +15,7 @@ class SineSource(base.Module):
     phase: base.Module = base.Constant(0.0)
 
     def setup(self):
-        self._last_cumsum_value = base.State(0.)
+        self._last_cumsum_value = base.Stateful(0.)
 
     def out_given_inputs(self, 
                          clock_signal: base.ClockSignal, 
@@ -23,27 +23,28 @@ class SineSource(base.Module):
                          amplitude: np.ndarray,
                          phase: np.ndarray):
         dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
-        cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value.get()
-        self._last_cumsum_value.set(cumsum[-1, :])
+        cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value
+        self._last_cumsum_value = cumsum[-1, :]
         out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
         return out
 
 
+# TODO: Rhytm problems!!! when you have multiple things
+@helpers.mark_for_testing()
 class Periodic(base.Module):
 
     def setup(self):
-        self._signal = base.State()
-        self._future = base.State(base.BlockFutureCache())
+        self._signal = base.Stateful()
+        self._future = base.Stateful(base.BlockFutureCache())
 
     def set_signal(self, signal: np.ndarray):
-        self._signal.set(signal)
+        self._signal = signal
 
     def out(self, clock_signal: base.ClockSignal):
-        signal = self._signal.get()
-        if signal is None:
+        if self._signal is None:
             return clock_signal.zeros()
         future: base.BlockFutureCache = self._future.get()
-        output = future.get(num_samples=clock_signal.num_samples, future=signal)
+        output = future.get(num_samples=clock_signal.num_samples, future=self._signal)
         if len(output.shape) != 2:
             output = np.broadcast_to(output.reshape(-1, 1), clock_signal.shape)
         return output
@@ -53,13 +54,43 @@ class Periodic(base.Module):
 #    melody: Sequence[Note]
 
 
-class SamplesToTriggers(base.Module):
 
-    def out(self, clock_signal: base.ClockSignal):
-        sample = self.sampler.sample(clock_signal.get_clock(), 
-                                     num_samples=5000)  # TODO: should be internal somehow I think
+# TODO: WIP 
+## class PatternMaker(base.BaseModule):
+## 
+##     p: base.SingleValueModule
+##     l: base.SingleValueModule
+## 
+##     def out_given_inputs(self, clock_signal: ClockSignal, p, l):
+##         ...
+## 
+## 
+## class SamplesToTriggers(base.Module):
+## 
+##     def out(self, clock_signal: base.ClockSignal):
+##         sample = self.sampler.sample(clock_signal.get_clock(), 
+##                                      num_samples=5000)  # TODO: should be internal somehow I think
+## 
+## 
+## class SineSample(base.BaseModule):
+## 
+##     frequency: BaseModule
+##     length: BaseModule
+## 
+##     def setup(self):
+##         pass
+## 
+##     def out(self, clock_signal):
+##         freq, length = ...
+## 
+##         self._sincache[[freq, leng]] = ...
+## 
+##         sin()
+##         #fake_clock_signal = ClockSignalStartingAt0(lenght=self.length(clock_signal))
+##         return self.src(fake_clock_signal)
  
-
+# TODO: Add to tests
+# TODO: Fix, currently broken
 class TriggerModulator(base.Module):
     """
     Simplified OldTriggerModulator. Put an envelope on a trigger track.
@@ -68,7 +99,7 @@ class TriggerModulator(base.Module):
     Combine overlaps with a suitable function: max, fst, snd, add, ...
     """
 
-    sampler: base.Module
+    shape_maker: base.BaseModule
     triggers: base.Module
     combinator: base._Operator = np.add
 
@@ -79,9 +110,14 @@ class TriggerModulator(base.Module):
     def out(self, clock_signal: base.ClockSignal):
         """Generate one sample per trigger"""
         trigger_indices = np.nonzero(self.triggers(clock_signal))[0]
-        sample = self.sampler.sample(clock_signal.get_clock(), num_samples=5000)  # TODO
+
+        # sample = self.sampler.sample(clock_signal.get_clock(), num_samples=5000)  # TODO
+
         self.monitor_sender.set("sample", sample)
-        envelopes = [sample for _ in trigger_indices]
+
+        envelopes = [shape_maker(mz.FakeClockSignalStartingAt(i, lenght=1)) 
+                     for i in trigger_indices]
+
         current_signal = clock_signal.zeros()
         if self.previous.is_set and len(self.previous.get()) > 0:
             previous_signal = self.previous.get()
@@ -109,8 +145,6 @@ class TriggerModulator(base.Module):
         return res
 
        
-
-
 @dataclasses.dataclass(unsafe_hash=True)
 class Pattern:
     """Input to TriggerSource."""
@@ -128,7 +162,7 @@ class Pattern:
         # TODO: broadcast note_lengths
 
     def to_triggers(self, bpm, sample_rate):
-        assert self.note_value >= 1/4  # TODO
+        # assert self.note_value >= 1/4  # TODO
         samples_per_forth = round(sample_rate / (bpm / 60))  # number of samples between 1/4 triggers
         sampler_per_pattern_element = round(samples_per_forth * 4 * self.note_value)
 
@@ -143,9 +177,18 @@ class Pattern:
 class MelodySequencer(base.MultiOutputModule):
 
     bpm: base.SingleValueModule
+    # Should be list of Parameters
     pattern: Pattern
 
+    foo: base.BaseModule
+    bar: Sequence[base.BaseModule]
+
     def setup(self):
+
+        self.bar = {"foo":{"bar": ["bas", M]}}
+
+        isinstance(bar, Module)
+
         self.periodic = Periodic()
         self.note = base.Constant(220)  # TODO
         self.hold = base.Constant(512)

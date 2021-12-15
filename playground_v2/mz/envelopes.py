@@ -12,9 +12,6 @@ class ADSREnvelopeGenerator(base.BaseModule):
     release: base.SingleValueModule = base.Constant(100.)
     hold: base.SingleValueModule = base.Constant(500.)
 
-    def setup(self):
-        self.monitor_sender = base.MonitorSender()
-
     def out_given_inputs(self, clock_signal: base.ClockSignal, 
                          attack: float, decay: float, sustain: float, release: float, hold: float):
         attack = np.linspace(0, 1, round(attack))
@@ -22,7 +19,6 @@ class ADSREnvelopeGenerator(base.BaseModule):
         hold = np.ones(round(hold)) * sustain
         release = np.linspace(sustain, 0, round(release))
         result = np.concatenate((attack, decay, hold, release), 0)
-        self.monitor_sender.set("env", result)
         if len(result) < clock_signal.num_samples:
             result = np.concatenate((result, np.zeros(clock_signal.num_samples - len(result))), 0)
         elif len(result) > clock_signal.num_samples:

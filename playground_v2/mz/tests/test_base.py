@@ -15,6 +15,8 @@ class Node(base.BaseModule):
     src: base.Module
     trg: base.BaseModule
 
+    def out_given_inputs(self, clock_signal: base.ClockSignal, src, trg):
+        return src, trg
 
 class NodeModule(base.Module):
     src: base.Module
@@ -25,6 +27,7 @@ class NodeModule(base.Module):
 
 
 def test_cached_sampling():
+    raise pytest.skip("Need to revisit sampling.")
     clock = base.Clock()
     root = NodeModule(base.Constant(1), base.Constant(2))
     root.unlock()  # To overwrite out
@@ -57,7 +60,6 @@ def test_cacheable_base_module():
             return clock_signal.zeros()
 
     m = M()
-    m.unlock()
     out_mock = mock.MagicMock()
     out_mock.side_effect = m.out
     m.out = out_mock
@@ -99,13 +101,14 @@ class test_multi_output_module():
 def test_direct_submodules():
     trg = Node(base.Constant(2), base.Constant(3))
     root = Node(src=base.Constant(1), trg=trg)
-    actual = tuple(root._direct_submodules)
-    expected = (("src", base.Constant(1)),
-                ("trg", trg))
+    actual = root._direct_submodules
+    expected = {"src": base.Constant(1),
+                "trg": trg}
     assert actual == expected
 
 
 def test_cache_key():
+    raise pytest.skip("Need to revisit sampling.")
     root = Node(
         src=Node(
             src=Node(src=base.Constant(1), 
@@ -132,21 +135,6 @@ def test_cache_key():
 
     root = Node(src=base.Constant(1), trg=NoCacheKeyModule())
     root.get_cache_key()
-
-
-def test_is_subclass():
-
-    class M(base.Module):
-        pass
-
-    assert base.safe_is_subclass(base.Constant, base.BaseModule)
-    assert base.safe_is_subclass(M, base.BaseModule)
-
-    class N(base.Module):
-        src: base.Module
-
-    n = N(src=base.Constant(2.))
-    assert n._other_modules == ["src"]
 
 
 def test_prepend_past():
@@ -213,18 +201,46 @@ def test_named_submodules():
         "trg.trg": Leaf(6),
     }
 
-    actual_submodules = root.find_submodules(cls=Leaf)
+    actual_submodules = root._filter_submodules_by_cls(cls=Leaf)
     assert expected_submodules == actual_submodules
+
+
+def test_named_submodules_sum():
+
+    class Leaf(base.BaseModule):
+        v: int
+
+        def setup(self):
+            self.state = base.Stateful(self.v)
+            self.param = base.Parameter(self.v)
+
+    class M(base.BaseModule):
+
+        def setup(self):
+            self.out = 220 * sum(Leaf(i) for i in range(100))
+
+    m = M()
+    state_values = set(v["state"] for v in m.get_state_dict().values())
+    assert state_values == set(range(100))
+
+    param_values = set(p.get() for p in m.get_params_dict().values())
+    assert param_values == set(range(100))
 
 
 def test_state():
 
     class Leaf(base.BaseModule):
-        v: int
+        inp: int
         
         def setup(self):
-            self._state_a = base.State(initial_value=self.v)
-            self._state_b = base.State(initial_value=self.v*10)
+            self._state = base.Stateful(self.inp*10)
+            self._more_state = base.Stateful(self.inp)
+            self._not_state = 2.
+            self._also_not_state = base.Parameter(1.)
+
+        def out(self, clock_signal):
+            self._state = 27
+            return clock_signal.zeros() * self._state
 
     root = Node(
         src=Node(
@@ -235,22 +251,28 @@ def test_state():
     )
 
     expected_state = {
-        "src.src.src._state_a": 1,
-        "src.src.trg.src._state_a": 2,
-        "src.src.trg.trg._state_a": 3,
-        "src.trg._state_a": 4,
-        "trg.src._state_a": 5,
-        "trg.trg._state_a": 6,
-
-        "src.src.src._state_b": 10,
-        "src.src.trg.src._state_b": 20,
-        "src.src.trg.trg._state_b": 30,
-        "src.trg._state_b": 40,
-        "trg.src._state_b": 50,
-        "trg.trg._state_b": 60,
+        "src.src.src": {"_more_state": 1, "_state": 10}, 
+        "src.src.trg.src": {"_more_state": 2, "_state": 20}, 
+        "src.src.trg.trg": {"_more_state": 3, "_state": 30}, 
+        "src.trg": {"_more_state": 4, "_state": 40}, 
+        "trg.src": {"_more_state": 5, "_state": 50}, 
+        "trg.trg": {"_more_state": 6, "_state": 60}, 
     }
 
-    actual_state = {k: s._value for k, s in root.get_state_dict().items()}
+    actual_state = root.get_state_dict()
+    assert expected_state == actual_state
+
+    # Update state in out
+    _ = root(base.ClockSignal.test_signal())
+    expected_state = {
+        "src.src.src": {"_more_state": 1, "_state": 27}, 
+        "src.src.trg.src": {"_more_state": 2, "_state": 27}, 
+        "src.src.trg.trg": {"_more_state": 3, "_state": 27}, 
+        "src.trg": {"_more_state": 4, "_state": 27}, 
+        "trg.src": {"_more_state": 5, "_state": 27}, 
+        "trg.trg": {"_more_state": 6, "_state": 27}, 
+    }
+    actual_state = root.get_state_dict()
     assert expected_state == actual_state
 
 
@@ -260,7 +282,8 @@ def test_copy_state_and_params():
         v: int
 
         def setup(self):
-            self.state = base.State(self.v)
+            self.state_a = base.Stateful(self.v)
+            self.state_b = base.Stateful(self.v * 10)
             self.param = base.Parameter(self.v * 10)
 
     module_a = Node(
@@ -273,22 +296,19 @@ def test_copy_state_and_params():
 
     module_b = Node(
         src=Node(
-            src=Node(src=Leaf(-1), trg=Node(Leaf(-1), Leaf(-1))),
-            trg=Leaf(-1)
+            src=Node(src=Leaf(0), trg=Node(Leaf(0), Leaf(0))),
+            trg=Leaf(0)
         ),
-        trg=Node(Leaf(-1), Leaf(-1))
+        trg=Node(Leaf(0), Leaf(0))
     )
 
-    module_b.set_state_from_dict(module_a.get_state_dict())
-    module_b.set_params_from_dict(module_a.get_params_dict())
-
     expected_state_values = {
-        "src.src.src.state": 1,
-        "src.src.trg.src.state": 2,
-        "src.src.trg.trg.state": 3,
-        "src.trg.state": 4,
-        "trg.src.state": 5,
-        "trg.trg.state": 6,
+        "src.src.src": {"state_a": 1, "state_b": 10},
+        "src.src.trg.src": {"state_a": 2, "state_b": 20},
+        "src.src.trg.trg": {"state_a": 3, "state_b": 30},
+        "src.trg": {"state_a": 4, "state_b": 40},
+        "trg.src": {"state_a": 5, "state_b": 50},
+        "trg.trg": {"state_a": 6, "state_b": 60},
     }
 
     expected_param_values = {
@@ -300,7 +320,9 @@ def test_copy_state_and_params():
         "trg.trg.param": 60,
     }
 
-    actual_state_values = {k: v.get() for k, v in module_b.get_state_dict().items()}
+    module_b.copy_state_from(module_a)
+    module_b.set_params_from_dict(module_a.get_params_dict())
+    actual_state_values = module_b.get_state_dict()
     actual_param_values = {k: v.get() for k, v in module_b.get_params_dict().items()}
     assert actual_state_values == expected_state_values
     assert actual_param_values == expected_param_values
