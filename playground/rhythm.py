@@ -576,17 +576,18 @@ class MultiNoteTest(Module):
         # for i, key in enumerate(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]):
         #     kbinp = KBInput(key)
         #     notes.append(kbinp * SineSource(P(220.0 * FreqFactors.STEP.value ** i)))
-        self.n1 = KBInput("q") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 0))
-        self.n2 = KBInput("w") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 1))
-        self.n3 = KBInput("e") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 2))
-        self.n4 = KBInput("r") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 3))
-        self.n5 = KBInput("t") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 4))
-        self.n6 = KBInput("y") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 5))
-        self.n7 = KBInput("u") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 6))
-        self.n8 = KBInput("i") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 7))
-        self.n9 = KBInput("o") * TriangleSource(P(220.0 * FreqFactors.STEP.value ** 8))
+        self.n1 = KBInput("q") * SineSource(P(220.0 * FreqFactors.STEP.value ** 0))
+        self.n2 = KBInput("w") * SineSource(P(220.0 * FreqFactors.STEP.value ** 1))
+        self.n3 = KBInput("e") * SineSource(P(220.0 * FreqFactors.STEP.value ** 2))
+        self.n4 = KBInput("r") * SineSource(P(220.0 * FreqFactors.STEP.value ** 3))
+        self.n5 = KBInput("t") * SineSource(P(220.0 * FreqFactors.STEP.value ** 4))
+        self.n6 = KBInput("y") * SineSource(P(220.0 * FreqFactors.STEP.value ** 5))
+        self.n7 = KBInput("u") * SineSource(P(220.0 * FreqFactors.STEP.value ** 6))
+        self.n8 = KBInput("i") * SineSource(P(220.0 * FreqFactors.STEP.value ** 7))
+        self.n9 = KBInput("o") * SineSource(P(220.0 * FreqFactors.STEP.value ** 8))
+        self.n10 = KBInput("p") * SineSource(P(220.0 * FreqFactors.STEP.value ** 9))
 
-        self.out = 0*MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3) + self.n1 + self.n2 + self.n3 + self.n4 + self.n5 + self.n6 + self.n7 + self.n8 + self.n9
+        self.out = 0*MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3) + self.n1 + self.n2 + self.n3 + self.n4 + self.n5 + self.n6 + self.n7 + self.n8 + self.n9 + self.n10
 
 
 class MultiSourceTest(Module):
