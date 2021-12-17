@@ -50,6 +50,23 @@ class Periodic(base.Module):
         return output
 
 
+class PeriodicTriggerSource(base.Module):
+    
+    bpm: base.SingleValueModule = base.Constant(130)
+    note_value: float = 1/4
+
+    def out_given_inputs(self, clock_signal: base.ClockSignal, bpm: float):
+        sample_rate = clock_signal.sample_rate
+        samples_per_forth = round(sample_rate / (bpm / 60))  # number of samples between 1/4 triggers
+        samples_per_pattern_element = round(samples_per_forth * 4 * self.note_value)
+
+        # Bool array.
+        triggers = (clock_signal.sample_indices % samples_per_pattern_element == 0)
+        # {0, 1} array.
+        triggers = triggers.reshape(-1, 1) * np.ones(clock_signal.shape)
+        return triggers
+
+
 #class Melody(base.BaseModule):
 #    melody: Sequence[Note]
 
