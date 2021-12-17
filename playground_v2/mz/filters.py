@@ -3,6 +3,7 @@ from mz import helpers
 from mz import sources
 
 import math
+import dataclasses
 import scipy.signal
 import functools
 import numpy as np
@@ -92,3 +93,71 @@ class ButterworthFilter(base.Module):
         filtered_signal = filtered_signal * np.ones(num_channels)
         return filtered_signal[-num_samples:, :]
 
+
+# TODO(dariok,fab-jul): Make DelayElement into a module such that we can interactively
+# change stuff like `time`.
+
+# TODO(dariok): do we have access to the sampling frequency of the whole mod synt?
+# if yes it's nice cause we could do actual physical values for example milliseconds for delay
+# and hz for filter cutoffs...
+@dataclasses.dataclass
+class DelayElement:
+    # number of buffer steps the signal is delayed
+    time: int
+    # how much of the signal is fed back (0-1)
+    feedback: float
+    # amplification applied to the delay
+    gain: float = 1
+    # whether or not the normal signal amplitude is decreased when the feedback increases
+    # (requires some gain to keep the volume)
+    proportional: bool = False
+    # lower cutoff frequency of the filter relative to the nyquist frequency
+    lo_cut: float = 0.01
+    # upper cutoff frequency of the filter relative to the nyquist frequency
+    hi_cut: float = 0.8
+    # use a basic limiter to avoid distortion
+    limit: bool = False
+
+    def __post_init__(self):
+        self.filter_coeff_b, self.filter_coeff_a = scipy.signal.butter(
+            4, [self.lo_cut, self.hi_cut], 'band')
+        self.delay = np.array([0])
+
+    def __call__(self, signal_buffer: helpers.ArrayBuffer, num_samples: int):
+        # TODO: Disabled, as I think it's just always 0,
+        # Will this work for signals > num_samples?
+        # n = signal_buffer.maxlen - self.time - 1
+        full_signal = signal_buffer.get()
+        delayed_signal = full_signal[:num_samples]
+
+        if self.proportional:
+            self.delay = delayed_signal * (1 - self.feedback) + self.delay * self.feedback
+        else:
+            self.delay = delayed_signal + self.delay * self.feedback
+
+        self.delay = scipy.signal.lfilter(self.filter_coeff_b, self.filter_coeff_a, self.delay)
+
+        delay = self.delay * self.gain
+
+        if self.limit:
+            # TODO: only experimental, need to check the proper dynamic range
+            # you can get some drive if you set a high gain (~100) and enable limiting
+           delay = scipy.special.expit(delay*6)
+
+        return delay
+
+
+class SimpleDelay(base.Module):
+
+    signal: base.Module
+    delay: DelayElement
+    mix: float = 0.7
+
+    def setup(self):
+        self.buffer = helpers.ArrayBuffer(self.delay.time + 1)
+
+    def out(self, clock_signal: base.ClockSignal):
+        input_signal = self.signal(clock_signal)
+        self.buffer.push(input_signal)
+        return (input_signal * (1 - self.mix) + 
+                self.delay(self.buffer, clock_signal.num_samples) * self.mix)

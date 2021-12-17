@@ -3,3 +3,4 @@ from .io import *
 from .sources import *
 from .filters import *
 from .envelopes import *
+from .helpers import *
