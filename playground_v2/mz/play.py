@@ -220,7 +220,7 @@ class SynthesizerController:
 
         # Copy old state and params.
         new_instance.set_params_from_dict(self.params)
-        new_instance.set_state_from_dict(self.state)
+        new_instance.copy_state_from(self.output_gen)
 
         # All good, can use new code.
         self._set_output_gen(new_instance)
@@ -323,7 +323,8 @@ class SynthesizerController:
                 raise TypeError(event)
 
         self.signal_window.set_signal(outdata, suppl=list(
-            itertools.chain.from_iterable(m for m in self.output_gen._monitor_senders)))
+            #itertools.chain.from_iterable(m for m in self.output_gen._monitor_senders)))
+        ))
         self.recorder.push(outdata)
 
 
