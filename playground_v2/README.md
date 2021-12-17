@@ -16,7 +16,7 @@ class SineSource(mz.Module):
     # 2
     def setup(self):
         # 3
-        self._last_cumsum_value = mz.State(0.)
+        self._last_cumsum_value = mz.Stateful(0.)
 
     # 4
     def out_given_inputs(self, 
@@ -25,8 +25,8 @@ class SineSource(mz.Module):
                          amplitude: np.ndarray,
                          phase: np.ndarray):
         dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
-        cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value.get()
-        self._last_cumsum_value.set(cumsum[-1, :])
+        cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value
+        self._last_cumsum_value = cumsum[-1, :]
         out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
         return out
 
@@ -35,7 +35,7 @@ class SineSource(mz.Module):
 1. Specify module members like in dataclasses, via class-level _type-annotated_ attributes
 2. Specify a `setup` function (**optional**) if you would like to perform further initialization given 
    the module attributes.
-3. Any variables that change in `out` must be `mz.State` variables! These are just very light wrappers around arbirary python types, so you may
+3. Any variables that change in `out` that are supposed to survive hot reloading must be `mz.Stateful` variables! These are just very light wrappers around arbirary python types, so you may
    use whatever you like, e.g., lists.
 4. To define an `out` implementation, the simplest is to define `out_given_inputs`, which takes a `clock_signal` and an
    argument of the _`Modules`_ variables. The value of that will be set to the output of the Module. Note for example
@@ -101,49 +101,7 @@ TODO
 
 ### Gotchas
 
-#### "Locked" Modules
-
-After `setup`, a module is - by default - "locked" and you may not change any variables _assignements_, i.e.:
-
-```python
-class Foo(mz.Module):
-
-    bar: Module
-
-    def out_given_inputs(self, clock_signal: mz.ClockSignal, bar: np.ndarray):
-        self.foo = np.mean(bar)  # Will raise an exception because we assign to self.
-```
-
-There are a few alternatives:
-
-_Option 1_: (preferred): Use `mz.State` for variables that need to change, and create a placeholder in `setup`. The above example would become:
-
-```python
-class Foo(mz.Module):
-
-    bar: Module
-
-    def setup(self):
-        self.foo = mz.State()
-
-    def out_given_inputs(self, clock_signal: mz.ClockSignal, bar: np.ndarray):
-        self.foo.set(np.mean(bar))  # Ok - we do not create new variables.
-```
-
-_Option 2_: (discouraged, but useful for tests etc): Use the `unlocked` context:
-
-
-```python
-class Foo(mz.Module):
-
-    bar: Module
-
-    def out_given_inputs(self, clock_signal: mz.ClockSignal, bar: np.ndarray):
-        with self.unlocked():
-            self.foo = np.mean(bar)  # Ok - but DISCOURAGED! Use mz.State instead.
-```
-
-_Option 3_: (even more discouraged): A module that may overwrite `_should_auto_lock(self)` with `return False`.
+TODO: Describe hot reloading and State interaction.
 
 ### Implementation Details
 
