@@ -545,12 +545,12 @@ class MultiNote(Module):
                                         [1 / 4, 1 / 8, 3 / 8, 1 / 16, 3 / 16, 1 / 32, 3 / 32, 1 / 64, 3 / 64], k=8)
                               )
         base_freq = Parameter(220, key='f')
-        base_phase = Parameter(0.01, key="p")
+        base_phase = Parameter(2 * np.pi, key="p")
         for i in range(num_overtones):
-            phase_factor = base_phase * i
+            phase_factor = base_phase * random.random()
             amp_factor = 1/(1+i)
-            length_factor = 1 - i * (0.5/num_overtones)
-            freq_factor = base_freq * (i+1)
+            length_factor = (Parameter(1, key="l", lo=0, hi=10, clip=True)/(i+1))
+            freq_factor = base_freq * (i+1.0)
             note_env = lambda length: ExpEnvelopeGen(
                 attack_length=length * length_factor * 0.05,
                 attack_curvature=P(10),
@@ -572,7 +572,7 @@ class MultiNote(Module):
 class MultiNoteTest(Module):
     def __init__(self):
         bpm = Parameter(120, key="b")
-        self.out = MultiNote(bpm=bpm, source_waveform=SawSource, num_overtones=9)
+        self.out = MultiNote(bpm=bpm, source_waveform=SineSource, num_overtones=3)
 
 
 class MultiSourceTest(Module):
