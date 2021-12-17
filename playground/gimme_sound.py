@@ -12,7 +12,6 @@ import argparse
 import collections
 import datetime
 import getpass
-import queue
 import re
 import dataclasses
 import importlib
@@ -26,7 +25,6 @@ import typing
 import numpy as np
 import scipy.io.wavfile
 import sounddevice as sd
-import soundfile as sf
 
 from playground import filewatcher
 from playground import midi_lib
@@ -134,7 +132,8 @@ class SynthesizerController:
 
     def __init__(self,
                  modules_file_name: str, output_gen_class: str, sample_rate, num_samples, num_channels,
-                 signal_window: window_lib.SignalWindow, recorder: Recorder):
+                 signal_window: window_lib.SignalWindow, recorder: Recorder,
+                 midi_knobs_file: str, midi_port_name_regex: str):
         self.sample_rate = sample_rate
         modules.SAMPLING_FREQUENCY = sample_rate  # TODO: a hack until it's clear how to pass
         self.num_channels = num_channels
@@ -152,7 +151,7 @@ class SynthesizerController:
         try:
             # TODO: make a flag!
             # TODO: Support reloading
-            self.known_knobs = midi_lib.KnownKnobs.from_file("traktor_kontrol_knobs.txt")
+            self.known_knobs = midi_lib.KnownKnobs.from_file(midi_knobs_file)
         except FileNotFoundError as e:
             print(f"ERROR: {e}")
             self.known_knobs = midi_lib.KnownKnobs({})
@@ -169,9 +168,9 @@ class SynthesizerController:
 
         self.midi_controller: typing.Optional[midi_lib.Controller] = None
         try:
-            self.midi_controller = midi_lib.Controller.make()
+            self.midi_controller = midi_lib.Controller.make(port_name_regex=midi_port_name_regex)
         except Exception as e:
-            print(f"Caught: {e}")
+            print(f"Failed to create midi controller, caught `{e}`", file=sys.stderr)
 
         Timer(fire_every=1,
               repeats=True,
@@ -334,11 +333,15 @@ class SynthesizerController:
         self.recorder.push(outdata)
 
 
-
-def start_sound(modules_file_name: str, output_gen_class: str, device: int, record_max_minutes: int):
+def start_sound(modules_file_name: str,
+                output_gen_class: str,
+                device: int,
+                record_max_minutes: int,
+                midi_knobs_file: str,
+                midi_port_name_regex: str):
     if device < 0:
         device = None  # Auto-select.
-    sample_rate = sd.query_devices(device, 'output')['default_samplerate']
+    sample_rate = sd.query_devices(device, "output")["default_samplerate"]
 
     # TODO(fab-jul): Investigate how large we can make this.
     num_samples = 2048
@@ -359,7 +362,9 @@ def start_sound(modules_file_name: str, output_gen_class: str, device: int, reco
         num_channels=num_channels,
         num_samples=num_samples,
         signal_window=signal_window,
-        recorder=recorder)
+        recorder=recorder,
+        midi_knobs_file=midi_knobs_file,
+        midi_port_name_regex=midi_port_name_regex)
 
     # Start audio stream.
 
@@ -378,8 +383,8 @@ def start_sound(modules_file_name: str, output_gen_class: str, device: int, reco
 def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
-        '-l', '--list-devices', action='store_true',
-        help='show list of audio devices and exit')
+        "-l", "--list-devices", action="store_true",
+        help="show list of audio devices and exit")
     args, remaining = parser.parse_known_args()
     if args.list_devices:
         print(sd.query_devices())
@@ -395,12 +400,26 @@ def main():
         "--output_gen_class", required=True,
         help="A `Module` subclass in MODULES_FILE_NAME.")
     parser.add_argument(
-        '-d', '--device', type=int, default=-1,
-        help='output device (numeric ID or substring)')
+        "-d", "--device", type=int, default=-1,
+        help="Output device (numeric ID or substring, -1 to auto-detect.)")
+    parser.add_argument(
+        "--midi_knobs", type=str, default="traktor_kontrol_knobs.txt",
+        help=("File to read midi assignments from, see `traktor_kontrol_knobs.txt` for an example. "
+              "Use `midi_lib.py ... map_device` to create a mapping."))
+    parser.add_argument(
+        "--midi_port_name_regex", type=str, default="Traktor Kontrol",
+        help="Regex matching a connected midi device. To see devices, use `midi_lib.py list_devices`.")
+
+
     parser.add_argument("--record_max_minutes", type=int, default=5)
     args = parser.parse_args(remaining)
 
-    start_sound(args.modules_file_name, args.output_gen_class, args.device, args.record_max_minutes)
+    start_sound(modules_file_name=args.modules_file_name,
+                output_gen_class=args.output_gen_class,
+                device=args.device,
+                record_max_minutes=args.record_max_minutes,
+                midi_knobs_file=args.midi_knobs,
+                midi_port_name_regex=args.midi_port_name_regex)
 
 
 if __name__ == "__main__":

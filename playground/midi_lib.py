@@ -9,6 +9,7 @@ import dataclasses
 import enum
 import queue
 import re
+import sys
 import threading
 import typing
 import platform
@@ -74,6 +75,16 @@ class ControllerError(Exception):
     pass
 
 
+def iter_ports(midiin):
+    ports = range(midiin.getPortCount())
+    if not ports:
+        raise ControllerError("No ports!")
+
+    for i in ports:
+        port_name = midiin.getPortName(i)
+        yield i, port_name
+
+
 class Controller:
 
     @classmethod
@@ -87,20 +98,18 @@ class Controller:
             ControllerError: If the controller cannot be generated.
         """
         midiin = rtmidi.RtMidiIn()
-        ports = range(midiin.getPortCount())
-        if not ports:
-            raise ControllerError("No ports!")
         port_to_use = None
-        for i in ports:
-            port_name = midiin.getPortName(i)
+        for i, port_name in iter_ports(midiin):
             sel = bool(re.search(port_name_regex, port_name))
             sel_str = ">" if sel else " "
             print(f"{sel_str} MIDI Port {i}: {port_name}")
             if sel:
+                if port_to_use is not None:
+                    raise ControllerError("Already had a match!")
                 port_to_use = i
-        if not port_to_use:
+        if port_to_use is None:
             raise ControllerError("Nothing found for", port_name_regex)
-        print(f"Found device matching {port_to_use}!")
+        print(f"Found device matching {port_to_use}: port #{port_to_use}")
         return Controller(midiin, port_to_use)
 
     def __init__(self, midiin, port_to_use):
@@ -251,10 +260,14 @@ def explore(port_name_regex):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
-    p.add_argument("port_name_regex", type=str,
+    # TODO: Add list device functionality.
+    p.add_argument("-p", "--port_name_regex", type=str,
                    help="Regex to find the device you connected.")
 
     s = p.add_subparsers(help="Mode", dest="mode", required=True)
+
+    list_devices_p = s.add_parser("list_devices")
+
     map_device_p = s.add_parser("map_device")
     map_device_p.add_argument("out_file", type=str,
                               help="File for assignments. Note: will append.")
@@ -262,10 +275,15 @@ if __name__ == '__main__':
     explore_parser = s.add_parser("explore")
 
     flags = p.parse_args()
-    if flags.mode == "map_device":
+    if flags.mode == "list_devices":
+        midiin = rtmidi.RtMidiIn()
+        print("MiDi Devices:")
+        for _, port in iter_ports(midiin):
+            print(port)
+    elif flags.mode == "map_device":
         interactively_make_name_mapping(
             flags.port_name_regex, flags.out_file)
     elif flags.mode == "explore":
         explore(flags.port_name_regex)
     else:
-        p.print_usage()
+        p.print_usage(file=sys.stderr)
