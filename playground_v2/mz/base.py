@@ -60,6 +60,10 @@ class ClockSignal(NamedTuple):
     def zeros(self):
         return np.zeros_like(self.ts)
 
+    def change_length(self, new_length):
+        start = self.sample_indices[0]
+        return self.clock.get_clock_signal_with_start(start, length=new_length)
+
     @property
     def shape(self):
         return self.ts.shape
@@ -68,9 +72,24 @@ class ClockSignal(NamedTuple):
     def num_samples(self):
         return self.ts.shape[0]
 
+    @property
+    def num_channels(self):
+        return self.ts.shape[1]
+
     def add_channel_dim(self, signal):
         assert len(signal.shape) == 1
-        return np.broadcast_to(signal.reshape(-1, 1), self.shape)
+        return signal.reshape(-1, 1) * np.ones(self.num_channels)
+
+    def pad_or_truncate(self, signal, pad=0):
+        num_samples_signal, _ = signal.shape
+        if num_samples_signal == self.num_samples:
+            return signal
+        if num_samples_signal > self.num_samples:
+            return signal[:self.num_samples]
+        else:
+            missing = self.num_samples - num_samples_signal
+            return np.concatenate(
+                (signal, pad * np.ones((missing, self.num_channels), signal.dtype)), axis=0)
 
 
 class Clock:
@@ -92,11 +111,17 @@ class Clock:
         self.i += self.num_samples
         return clock_signal
 
+    def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
+        sample_indices = np.arange(start_idx, start_idx + length, 
+        dtype=int)  # TODO: Constant
+        return self.get_clock_signal(sample_indices)
+
     def get_current_clock_signal(self):
         sample_indices = self.i + self.arange
         return self.get_clock_signal(sample_indices)
 
     def get_clock_signal(self, sample_indices):
+        assert len(sample_indices) > 3  # TODO
         ts = sample_indices / self.sample_rate
         # Broadcast `ts` into (num_samples, num_channels)
         ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
@@ -215,7 +240,6 @@ class BaseModule(metaclass=ModuleMeta):
         # Note that we directly unpack state variables here via `get()`
         state_vars = {k: vars_after[k].get() for k in potential_state_vars
                             if isinstance(vars_after[k], Stateful)}
-        print(f"State vars: {state_vars.keys()}")
         # Now set variables to the unpacked version, since we now know which ones they are.
         # This allows users to then treat them as normal python types
         for k, v in state_vars.items():
