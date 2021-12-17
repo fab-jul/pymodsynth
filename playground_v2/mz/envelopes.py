@@ -19,6 +19,9 @@ class ADSREnvelopeGenerator(base.BaseModule):
         hold = np.ones(round(hold)) * sustain
         release = np.linspace(sustain, 0, round(release))
         result = np.concatenate((attack, decay, hold, release), 0)
+        # NOTE/describe: ignores clock_signal
+        return clock_signal.add_channel_dim(result)
+
         if len(result) < clock_signal.num_samples:
             result = np.concatenate((result, np.zeros(clock_signal.num_samples - len(result))), 0)
         elif len(result) > clock_signal.num_samples:
