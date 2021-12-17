@@ -104,23 +104,18 @@ class TriggerModulator(base.Module):
     combinator: base._Operator = np.add
 
     def setup(self):
-        self.previous = base.State()
-        self.monitor_sender = base.MonitorSender()
+        self.previous = base.Stateful()
 
     def out(self, clock_signal: base.ClockSignal):
         """Generate one sample per trigger"""
         trigger_indices = np.nonzero(self.triggers(clock_signal))[0]
 
-        # sample = self.sampler.sample(clock_signal.get_clock(), num_samples=5000)  # TODO
-
-        self.monitor_sender.set("sample", sample)
-
-        envelopes = [shape_maker(mz.FakeClockSignalStartingAt(i, lenght=1)) 
+        envelopes = [self.shape_maker(clock_signal.clock.get_clock_signal_with_start(i)) 
                      for i in trigger_indices]
 
         current_signal = clock_signal.zeros()
-        if self.previous.is_set and len(self.previous.get()) > 0:
-            previous_signal = self.previous.get()
+        if self.previous is not None and len(self.previous) > 0:
+            previous_signal = self.previous
         else:
             previous_signal = clock_signal.zeros()
         if envelopes:
@@ -133,15 +128,13 @@ class TriggerModulator(base.Module):
             current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
             for i, envelope in zip(trigger_indices, envelopes):
                 current_signal[i:i + len(envelope)] = envelope.reshape((-1, 1))
-                # plt.plot(envelope)
-                # plt.show()
         # combine the old and new signal using the given method
         max_len = max(len(previous_signal), len(current_signal))
         previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
         current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
         result = self.combinator(previous_signal, current_signal)
-        self.previous.set(result[len(clock_signal.ts):])
-        res = result[:len(clock_signal.ts)]
+        self.previous = result[clock_signal.num_samples:]
+        res = result[:clock_signal.num_samples]
         return res
 
        
