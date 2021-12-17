@@ -1,0 +1,7 @@
+{
+    "python.testing.pytestArgs": [
+        "playground_v2"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}
