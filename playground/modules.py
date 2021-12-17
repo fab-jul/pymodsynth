@@ -887,6 +887,8 @@ class FooBar(Module):
     def __init__(self):
         super().__init__()
 
+        #self.out = SineSource(frequency=Parameter(220., knob="r_mixer_hi"))
+
         self.base_freq = Parameter(220, lo=220 / 4, hi=440, knob="r_mixer_hi", key="u", clip=True)
         self.bpm = Parameter(160, lo=10, hi=300, knob="r_tempo")
 
@@ -894,10 +896,12 @@ class FooBar(Module):
         self.env_param_foo = Parameter(200, lo=100, hi=20000, knob="r_mixer_lo", key="c", clip=True)
 
         self.melody1 = StepSequencer(
-            wave_generator_cls=TriangleSource,
+            wave_generator_cls=SawSource,
             base_frequency=self.base_freq,
             bpm=self.bpm,
-            melody=[0, 0, 0, 4, 0, 0, 0, 12, 0, 0, 0, 4],
+            melody=random.choices([0, 4, 7, 12], k=4),
+
+
             steps=[1],
             gate='H',
             env_param=self.env_param_foo,
@@ -913,6 +917,9 @@ class FooBar(Module):
                        self.melody2 +
                        self.melody3)
 
+        self.melody = ButterworthFilter(self.melody, f_low=Parameter(10., key="r"), mode="lp")
+        #self.melody = self.melody
+
         self.attack_t = Parameter(200, lo=1, hi=2000, knob="fx1_0")
         self.decay_t = Parameter(10, lo=1, hi=20000, knob="fx1_1")
         self.sustain_t = Parameter(0.5, lo=0.01, hi=1., knob="fx1_2")
@@ -922,7 +929,7 @@ class FooBar(Module):
         self.bass = self.melody1.copy(
             wave_generator_cls=SineSource,
             bpm=self.bpm/2,
-            melody=[1, 4],#random.choices([1,2,4,7,9], k=3),
+            melody=[1, 1],#random.choices([1,2,4,7,9], k=3),
             env_param=self.env_param_bass,
             envelope=ADSREnvelopeGenerator(
                 self.attack_t,
@@ -931,7 +938,11 @@ class FooBar(Module):
                 self.release_t,
                 self.hold_t,
             ),
-            base_frequency=self.base_freq / 4)
+            base_frequency=self.base_freq/2)
+
+        self.out = self.bass + self.melody * 0.2
+
+        return
 
         self.mixer = Parameter(0.5, lo=0., hi=.8, knob="fx2_1", key="q", clip=True)
         self.mixer_m = Parameter(0.5, lo=0., hi=.8, knob="fx2_2", key="w", clip=True)
