@@ -29,6 +29,25 @@ class SineSource(base.Module):
         return out
 
 
+@helpers.mark_for_testing()
+class TimeIndependentSineSource(base.Module):
+    frequency: base.Module = base.Constant(440.)
+    amplitude: base.Module = base.Constant(1.0)
+    phase: base.Module = base.Constant(0.0)
+
+    def out_given_inputs(self, 
+                         clock_signal: base.ClockSignal, 
+                         frequency: np.ndarray, 
+                         amplitude: np.ndarray,
+                         phase: np.ndarray
+                         ):
+        dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
+        cumsum = np.cumsum(frequency * dt, axis=0)
+        out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
+        return out
+
+
+
 # TODO: Rhytm problems!!! when you have multiple things
 @helpers.mark_for_testing()
 class Periodic(base.Module):
