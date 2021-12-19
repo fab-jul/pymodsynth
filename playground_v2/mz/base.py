@@ -402,6 +402,8 @@ class BaseModule(metaclass=ModuleMeta):
         """Overwrite state given an other module."""
         for k in self._state_vars_names:
             value = getattr(other, k, None)
+            if value is None:
+                continue
             print(f"Setting {prefix}.{k} = {value}")
             setattr(self, k, value)
 
