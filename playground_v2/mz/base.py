@@ -47,6 +47,10 @@ class ClockSignal(NamedTuple):
     sample_rate: float
     clock: "Clock"
 
+    @staticmethod
+    def get_out_dtype():
+        return np.float32
+
     @classmethod
     def test_signal(cls) -> "ClockSignal":
         clock = Clock()
@@ -58,7 +62,7 @@ class ClockSignal(NamedTuple):
                 f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")  
 
     def zeros(self):
-        return np.zeros_like(self.ts)
+        return np.zeros_like(self.ts, dtype=self.get_out_dtype())
 
     def change_length(self, new_length):
         start = self.sample_indices[0]
@@ -113,7 +117,7 @@ class Clock:
 
     def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
         sample_indices = np.arange(start_idx, start_idx + length, 
-        dtype=int)  # TODO: Constant
+                                   dtype=int)  # TODO: Constant
         return self.get_clock_signal(sample_indices)
 
     def get_current_clock_signal(self):
