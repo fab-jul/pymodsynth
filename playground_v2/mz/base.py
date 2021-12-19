@@ -672,3 +672,15 @@ class BlockFutureCache:
 class FreqFactors(enum.Enum):
     OCTAVE = 2.
     STEP = 1.059463
+
+
+class Print(BaseModule):
+    """Behaves like identity, but has the side effect of printing the output `inp` while it runs."""
+
+    inp: BaseModule
+    printer: Callable[[np.ndarray], str] = lambda a: str(np.mean(a))
+
+    def out(self, clock_signal):
+        val = self.inp(clock_signal)
+        print(self.printer(val))
+        return val
