@@ -30,6 +30,22 @@ class SineSource(base.Module):
         return out
 
 
+class LFO(base.Module):
+
+    frequency: base.Module = base.Constant(1)
+    lo: float = 0.
+    hi: float = 1.
+
+    def setup(self):
+        self.sine = SineSource(frequency=self.frequency)
+
+    def out(self, clock_signal):
+        sine = self.sine(clock_signal)
+        sine_between_0_and_1 = (sine + 1) / 2
+        return sine_between_0_and_1 * (self.hi - self.lo) + self.lo
+
+
+
 @helpers.mark_for_testing()
 class TimeIndependentSineSource(base.Module):
     """A sine that always starts at 0, regardless of the current song time."""
@@ -56,6 +72,7 @@ class TimeIndependentSineSource(base.Module):
 _EPS_ALPHA = 1e-7
 
 
+# TODO: Does not properly handle frequency = LFO!
 class SkewedTriangleSource(base.Module):
     """A triangle that has the peak at alpha * period.
     
