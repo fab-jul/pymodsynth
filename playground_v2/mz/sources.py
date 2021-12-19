@@ -155,14 +155,19 @@ class Cycler(base.BaseModule):
 
     # TODO: Figure out why this must be hashable!
     seq: Sequence[float]
+    match_clock_shape: bool = False
 
     def setup(self):
         self.current_i = base.Stateful(0)
 
     def out(self, clock_signal: base.ClockSignal):
-        el = self.seq[self.current_i]
+        el = self.seq[min(self.current_i, len(self.seq)-1)]
         self.current_i = (self.current_i + 1) % len(self.seq)
-        return clock_signal.add_channel_dim(np.array([el]))
+        if self.match_clock_shape:
+            return el * np.ones(clock_signal.shape, dtype=clock_signal.get_out_dtype())
+        else:
+            output = np.array([el], dtype=clock_signal.get_out_dtype())
+            return clock_signal.add_channel_dim(output)
 
  
 @helpers.mark_for_testing(shape_maker=lambda: Cycler((1, 2, 3)),
