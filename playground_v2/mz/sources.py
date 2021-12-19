@@ -30,6 +30,22 @@ class SineSource(base.Module):
         return out
 
 
+class LFO(base.Module):
+
+    frequency: base.Module = base.Constant(1)
+    lo: float = 0.
+    hi: float = 1.
+
+    def setup(self):
+        self.sine = SineSource(frequency=self.frequency)
+
+    def out(self, clock_signal):
+        sine = self.sine(clock_signal)
+        sine_between_0_and_1 = (sine + 1) / 2
+        return sine_between_0_and_1 * (self.hi - self.lo) + self.lo
+
+
+
 @helpers.mark_for_testing()
 class TimeIndependentSineSource(base.Module):
     """A sine that always starts at 0, regardless of the current song time."""
@@ -56,6 +72,7 @@ class TimeIndependentSineSource(base.Module):
 _EPS_ALPHA = 1e-7
 
 
+# TODO: Does not properly handle frequency = LFO!
 class SkewedTriangleSource(base.Module):
     """A triangle that has the peak at alpha * period.
     
@@ -155,14 +172,19 @@ class Cycler(base.BaseModule):
 
     # TODO: Figure out why this must be hashable!
     seq: Sequence[float]
+    match_clock_shape: bool = False
 
     def setup(self):
         self.current_i = base.Stateful(0)
 
     def out(self, clock_signal: base.ClockSignal):
-        el = self.seq[self.current_i]
+        el = self.seq[min(self.current_i, len(self.seq)-1)]
         self.current_i = (self.current_i + 1) % len(self.seq)
-        return clock_signal.add_channel_dim(np.array([el]))
+        if self.match_clock_shape:
+            return el * np.ones(clock_signal.shape, dtype=clock_signal.get_out_dtype())
+        else:
+            output = np.array([el], dtype=clock_signal.get_out_dtype())
+            return clock_signal.add_channel_dim(output)
 
  
 @helpers.mark_for_testing(shape_maker=lambda: Cycler((1, 2, 3)),

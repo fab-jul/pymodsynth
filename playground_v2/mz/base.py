@@ -47,6 +47,10 @@ class ClockSignal(NamedTuple):
     sample_rate: float
     clock: "Clock"
 
+    @staticmethod
+    def get_out_dtype():
+        return np.float32
+
     @classmethod
     def test_signal(cls) -> "ClockSignal":
         clock = Clock()
@@ -58,7 +62,7 @@ class ClockSignal(NamedTuple):
                 f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")
 
     def zeros(self):
-        return np.zeros_like(self.ts)
+        return np.zeros_like(self.ts, dtype=self.get_out_dtype())
 
     def change_length(self, new_length):
         start = self.sample_indices[0]
@@ -112,7 +116,7 @@ class Clock:
         return clock_signal
 
     def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
-        sample_indices = np.arange(start_idx, start_idx + length,
+        sample_indices = np.arange(start_idx, start_idx + length, 
                                    dtype=int)  # TODO: Constant
         return self.get_clock_signal(sample_indices)
 
@@ -405,6 +409,8 @@ class BaseModule(metaclass=ModuleMeta):
         """Overwrite state given an other module."""
         for k in self._state_vars_names:
             value = getattr(other, k, None)
+            if value is None:
+                continue
             print(f"Setting {prefix}.{k} = {value}")
             setattr(self, k, value)
 
@@ -672,3 +678,15 @@ class BlockFutureCache:
 class FreqFactors(enum.Enum):
     OCTAVE = 2.
     STEP = 1.059463
+
+
+class Print(BaseModule):
+    """Behaves like identity, but has the side effect of printing the output `inp` while it runs."""
+
+    inp: BaseModule
+    printer: Callable[[np.ndarray], str] = lambda a: str(np.mean(a))
+
+    def out(self, clock_signal):
+        val = self.inp(clock_signal)
+        print(self.printer(val))
+        return val
