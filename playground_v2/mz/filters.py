@@ -163,3 +163,40 @@ class SimpleDelay(base.Module):
         self.buffer.push(input_signal)
         return (input_signal * (1 - self.mix) + 
                 self.delay(self.buffer, clock_signal.num_samples) * self.mix)
+
+
+
+# ------------------------------------------------------------------------------
+
+def _explore():
+    from mz.experimental.subplots import Subplots, plt
+    from mz.sources import SkewedTriangleSource, Cycler
+    from mz.base import Clock, Print
+
+    s = Subplots(nrows=2)
+
+
+    src = SkewedTriangleSource()
+    filt = ButterworthFilter(src, 
+    f_low=Print(Cycler((600, 650, 700))),
+mode="lp",
+    )
+    clock = Clock()
+
+    clock_signals = [clock(), clock(), clock()]
+
+    ax1 = s.next_ax()
+    ax2 = s.next_ax()
+    for c in clock_signals:
+        o = src(c)[:, 0]
+        ax1.plot(c.ts, o)
+        o = filt(c)[:, 0]
+        #filt._last_signal = None
+        ax2.plot(c.ts, o)
+    
+    plt.show()
+
+
+
+if __name__ == "__main__":
+    _explore()

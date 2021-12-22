@@ -99,6 +99,7 @@ class PeriodicTriggerSource(base.Module):
     
     bpm: base.SingleValueModule = base.Constant(130)
     note_value: float = 1/4
+    rel_offset: float = 0
 
     def out_given_inputs(self, clock_signal: base.ClockSignal, bpm: float):
         sample_rate = clock_signal.sample_rate
@@ -106,7 +107,8 @@ class PeriodicTriggerSource(base.Module):
         samples_per_pattern_element = round(samples_per_forth * 4 * self.note_value)
 
         # Elements are in {True, False}.
-        triggers = (clock_signal.sample_indices % samples_per_pattern_element == 0)
+        triggers = ((clock_signal.sample_indices + self.rel_offset * samples_per_pattern_element)
+                    % samples_per_pattern_element == 0)
         # Elements are in {1, 0}.
         triggers = np.ones(clock_signal.shape) * triggers.reshape(-1, 1)
         return triggers
