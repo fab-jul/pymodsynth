@@ -437,3 +437,16 @@ def test_block_future_cache():
     o = c.get(num_samples=2, future=np.array([1, 2, 3]))
     assert o.tolist() == [1, 2]
     assert c._cache.tolist()[0] == 3
+
+
+def test_join_lines():
+    lines = [
+        "hello, world",
+        "   indented lines are cool and should be"]
+    output = [
+        "hello, world",
+        "   indented lines",
+        "     are cool and",
+        "     should be",
+    ]
+    assert base._join_lines_limit_width(*lines, width=18) == "\n".join(output)

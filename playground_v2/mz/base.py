@@ -444,7 +444,10 @@ class BaseModule(metaclass=ModuleMeta):
         for name in self._single_value_modules:
             inputs[name] = getattr(self, name).out_single_value(clock_signal)
         for name in self._other_modules:
-            inputs[name] = getattr(self, name).out(clock_signal)
+            try:
+                inputs[name] = getattr(self, name).out(clock_signal)
+            except InvalidShapeError as e:
+                e.reraise(name, self)
         return self.out_given_inputs(clock_signal, **inputs)
 
     def out_single_value(self, clock_signal: ClockSignal) -> float:
@@ -567,18 +570,85 @@ class _MathModule(BaseModule):
         return f"Math(op={self.op.__name__}, left={left_name}, right={right_name})"
 
     def out(self, clock_signal: ClockSignal):
-        left = self._maybe_call(self.left, clock_signal)
-        right = self._maybe_call(self.right, clock_signal)
+        left = self._maybe_call("left", self.left, clock_signal)
+        right = self._maybe_call("right", self.right, clock_signal)
         result = self.op(left, right)
         if self.both_are_modules:
             clock_signal.assert_same_shape(result, self.name)
         return result
 
-    @staticmethod
-    def _maybe_call(module_or_number, clock_signal: ClockSignal):
-        if isinstance(module_or_number, BaseModule):
-            return module_or_number(clock_signal)
-        return module_or_number
+    def _maybe_call(self, side, module_or_number, clock_signal: ClockSignal):
+        try:
+            if isinstance(module_or_number, BaseModule):
+                return module_or_number(clock_signal)
+            return module_or_number
+        except InvalidShapeError as e:
+            e.reraise(side, self)
+
+
+class InvalidShapeError(Exception):
+
+    def __init__(self, invalid_shape, expected_shape, *, stack=None, initial_module=None) -> None:
+        if not stack:
+            if not initial_module:
+                raise ValueError
+            stack = [(None, initial_module)]
+        self.stack = stack
+        self.invalid_shape = invalid_shape
+        self.expected_shape = expected_shape
+
+    def reraise(self, attr_name: str, module):
+        raise InvalidShapeError(
+            self.invalid_shape, self.expected_shape,
+            stack=self.stack + [(attr_name, module)]) from self
+
+    def __str__(self) -> str:
+        infos = []
+        indent = ""
+        for attr_name, m in self.stack:
+            via_info = f" via `{attr_name}` of " if attr_name else ""
+            m_str = str(m)
+            if len(m_str) > 120:
+                m_str = m_str[:120] + "..."
+            infos.append(f"{indent}{via_info}{m_str}")
+            indent += "  "
+        return _join_lines_limit_width(
+            f"InvalidShapeError(invalid_shape={self.invalid_shape}, expected_shape={self.expected_shape}). Stack:",
+            *infos,
+            width=80)
+
+
+def _split_at_whitespace_before(line, width):
+    if len(line) <= width:
+        return line.strip(), None
+    whitespace_indices = [i for i, x in enumerate(line[:width]) if x == " "]
+    if not whitespace_indices:
+        # Relax
+        return _split_at_whitespace_before(line, width + 1)
+    split_index = whitespace_indices[-1]
+    return line[:split_index].strip(), line[split_index:].strip()
+
+
+def _join_lines_limit_width(*lines, width=80):
+    output = []
+    for line in lines:
+        if len(line) <= width:
+            output.append(line)
+            continue
+
+        num_indent = next(i for i, x in enumerate(line) if x != " ")
+        line_without_indent = line[num_indent:]
+        first_line, remainder = _split_at_whitespace_before(line_without_indent, width=width - num_indent)
+        output.append(" " * num_indent + first_line)
+        while remainder:
+            line, remainder = _split_at_whitespace_before(
+                remainder, 
+                # We do a 2 char indent for sub-paragraphs.
+                width=width - num_indent - 2)
+            output.append(" " * (num_indent + 2) + line)
+    return "\n".join(output)
+            
+                
 
 
 class Module(BaseModule):
@@ -589,10 +659,22 @@ class Module(BaseModule):
     shape of `clock_signal`.
     """
 
-    def __call__(self, clock_signal: ClockSignal):
-        result = self.out(clock_signal)
-        clock_signal.assert_same_shape(result, self.name)
-        return result
+    def __post_init__(self):
+        super().__post_init__()
+
+        real_out = self.out
+
+        # Redefine self.out to a function that calls the
+        # real out but does a shape check on the output.
+        def out_with_shape_check(clock_signal: ClockSignal):
+            output = real_out(clock_signal)
+            if output.shape != (clock_signal.num_samples,):
+                raise InvalidShapeError(output.shape, 
+                                        expected_shape=(clock_signal.num_samples,),
+                                        initial_module=self)
+            return output
+
+        self.out = out_with_shape_check
 
 
 # Use to annotate single values, TODO
