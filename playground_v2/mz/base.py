@@ -47,6 +47,10 @@ class ClockSignal(NamedTuple):
     sample_rate: float
     clock: "Clock"
 
+    @staticmethod
+    def get_out_dtype():
+        return np.float32
+
     @classmethod
     def test_signal(cls) -> "ClockSignal":
         clock = Clock()
@@ -55,10 +59,10 @@ class ClockSignal(NamedTuple):
     def assert_same_shape(self, a: np.ndarray, module_name: str):
         if a.shape != self.shape:
             raise ValueError(
-                f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")  
+                f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")
 
     def zeros(self):
-        return np.zeros_like(self.ts)
+        return np.zeros_like(self.ts, dtype=self.get_out_dtype())
 
     def change_length(self, new_length):
         start = self.sample_indices[0]
@@ -113,7 +117,7 @@ class Clock:
 
     def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
         sample_indices = np.arange(start_idx, start_idx + length, 
-        dtype=int)  # TODO: Constant
+                                   dtype=int)  # TODO: Constant
         return self.get_clock_signal(sample_indices)
 
     def get_current_clock_signal(self):
@@ -142,16 +146,18 @@ class NoCacheKeyError(Exception):
 #   See https://github.com/microsoft/pyright/blob/main/specs/dataclass_transforms.md
 #   for more information about the __dataclass_transform__ magic.
 _T = TypeVar("_T")
+
+
 def __dataclass_transform__(
-    *,
-    eq_default: bool = True,
-    order_default: bool = False,
-    kw_only_default: bool = False,
-    field_descriptors: Tuple[Union[type, Callable[..., Any]], ...] = (()),
+        *,
+        eq_default: bool = True,
+        order_default: bool = False,
+        kw_only_default: bool = False,
+        field_descriptors: Tuple[Union[type, Callable[..., Any]], ...] = (()),
 ) -> Callable[[_T], _T]:
-  # If used within a stub file, the following implementation can be
-  # replaced with "...".
-  return lambda a: a
+    # If used within a stub file, the following implementation can be
+    # replaced with "...".
+    return lambda a: a
 
 
 @__dataclass_transform__()
@@ -160,6 +166,7 @@ class ModuleMeta(type):
     
     This is used to convert all modules to dataclasses.
     """
+
     def __new__(cls, name, bases, dct):
         cls = super().__new__(cls, name, bases, dct)
         if "__post_init__" in dct:
@@ -234,12 +241,12 @@ class BaseModule(metaclass=ModuleMeta):
         vars_after = vars(self)
 
         names_of_variables_added_in_setup = {
-            k for k, v in vars_after.items() 
+            k for k, v in vars_after.items()
             if k not in keys_of_vars_before}
         potential_state_vars = names_of_variables_added_in_setup | non_module_fields
         # Note that we directly unpack state variables here via `get()`
         state_vars = {k: vars_after[k].get() for k in potential_state_vars
-                            if isinstance(vars_after[k], Stateful)}
+                      if isinstance(vars_after[k], Stateful)}
         # Now set variables to the unpacked version, since we now know which ones they are.
         # This allows users to then treat them as normal python types
         for k, v in state_vars.items():
@@ -301,58 +308,58 @@ class BaseModule(metaclass=ModuleMeta):
         return frame_buffer.get()
 
     # TODO: Revisit
-#    def cached_call(self, key_prefix, fn):
-#        """Return fn() but cache result, only re-execute `fn` if the cache key changes."""
-#        try:
-#            # Always use the function name in the cache name.
-#            # Note that this means that collisions can occur
-#            # if callers use this function on the same function name.
-#            key = (fn.__name__, key_prefix, self.get_cache_key())
-#        except NoCacheKeyError as e:
-#            print("NoCacheKeyError", e)
-#            key = None
-#
-#        if key and key in self._call_cache:
-#            return self._call_cache[key]
-#
-#        result = fn()
-#
-#        if key:
-#            self._call_cache[key] = result
-#
-#        return result
-#
-#    def _get_cache_key_recursive(self) -> Sequence[Tuple[str, Any]]:
-#        if not self._direct_submodules:
-#            return []
-#
-#        output = []
-#        for name, module in self._direct_submodules:
-#            output += [(name + "." + key, value) 
-#                       # Go into recursion.
-#                       for key, value in module.get_cache_key()]
-#        if not output:
-#            raise NoCacheKeyError(f"No cache key for {self.name}: {self._direct_submodules}")
-#        return tuple(output)
-#
-#    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
-#        """Get a key uniquely describing the state this module is in.
-#        
-#        If no such description is suitable, raise `NoCacheKeyError`.
-#        
-#        By default, we defer the cache key calculation to any immediate
-#        submodules, which in turn recursively do the same,
-#        until we land at leaf submodules, which *typically* are Constant
-#        or Parameter modules, which implement `get_cache_key` by returning their value.
-#        Thus, in practise, this function returns something like:
-#
-#            [("current.child1.param1.value", 1),
-#             ("current.child1.param2.value", 2),
-#             ("current.child2.value", 3)]
-#        """
-#        # The default implementaiton of cache key defers to
-#        # any direct submodules, see `_get_cache_key_recursive`.
-#        return self._get_cache_key_recursive()
+    #    def cached_call(self, key_prefix, fn):
+    #        """Return fn() but cache result, only re-execute `fn` if the cache key changes."""
+    #        try:
+    #            # Always use the function name in the cache name.
+    #            # Note that this means that collisions can occur
+    #            # if callers use this function on the same function name.
+    #            key = (fn.__name__, key_prefix, self.get_cache_key())
+    #        except NoCacheKeyError as e:
+    #            print("NoCacheKeyError", e)
+    #            key = None
+    #
+    #        if key and key in self._call_cache:
+    #            return self._call_cache[key]
+    #
+    #        result = fn()
+    #
+    #        if key:
+    #            self._call_cache[key] = result
+    #
+    #        return result
+    #
+    #    def _get_cache_key_recursive(self) -> Sequence[Tuple[str, Any]]:
+    #        if not self._direct_submodules:
+    #            return []
+    #
+    #        output = []
+    #        for name, module in self._direct_submodules:
+    #            output += [(name + "." + key, value)
+    #                       # Go into recursion.
+    #                       for key, value in module.get_cache_key()]
+    #        if not output:
+    #            raise NoCacheKeyError(f"No cache key for {self.name}: {self._direct_submodules}")
+    #        return tuple(output)
+    #
+    #    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
+    #        """Get a key uniquely describing the state this module is in.
+    #
+    #        If no such description is suitable, raise `NoCacheKeyError`.
+    #
+    #        By default, we defer the cache key calculation to any immediate
+    #        submodules, which in turn recursively do the same,
+    #        until we land at leaf submodules, which *typically* are Constant
+    #        or Parameter modules, which implement `get_cache_key` by returning their value.
+    #        Thus, in practise, this function returns something like:
+    #
+    #            [("current.child1.param1.value", 1),
+    #             ("current.child1.param2.value", 2),
+    #             ("current.child2.value", 3)]
+    #        """
+    #        # The default implementaiton of cache key defers to
+    #        # any direct submodules, see `_get_cache_key_recursive`.
+    #        return self._get_cache_key_recursive()
 
     def _get_named_submodules(self, prefix: str = ""):
         if self._named_submodules is None:
@@ -402,6 +409,8 @@ class BaseModule(metaclass=ModuleMeta):
         """Overwrite state given an other module."""
         for k in self._state_vars_names:
             value = getattr(other, k, None)
+            if value is None:
+                continue
             print(f"Setting {prefix}.{k} = {value}")
             setattr(self, k, value)
 
@@ -410,14 +419,14 @@ class BaseModule(metaclass=ModuleMeta):
             if other_submodule := other._direct_submodules.get(submodule_name, None):
                 submodule.copy_state_from(other_submodule, prefix=prefix + "." + submodule_name)
 
-#    def sample(self, clock: Clock, num_samples: int):
-#        def _sample():
-#            print("Sampling...")
-#            with self.disable_state():
-#                clock_signal = clock.get_clock_signal_num_samples(num_samples)
-#                return self.out(clock_signal)
-#
-#        return self.cached_call(key_prefix=(repr(clock), num_samples), fn=_sample)
+    #    def sample(self, clock: Clock, num_samples: int):
+    #        def _sample():
+    #            print("Sampling...")
+    #            with self.disable_state():
+    #                clock_signal = clock.get_clock_signal_num_samples(num_samples)
+    #                return self.out(clock_signal)
+    #
+    #        return self.cached_call(key_prefix=(repr(clock), num_samples), fn=_sample)
 
     def out(self, clock_signal: ClockSignal):
         inputs = {}
@@ -499,7 +508,6 @@ class MultiOutputModule(CacheableBaseModule):
 
 
 class _OutputSelector(BaseModule):
-
     src: MultiOutputModule
     output_name: str
 
@@ -581,7 +589,6 @@ SingleValueModule = TypeVar("SingleValueModule", bound=Module)
 
 
 class Constant(Module):
-    
     value: float
 
     def set(self, value):
@@ -590,10 +597,10 @@ class Constant(Module):
     def get(self):
         return self.value
 
-#    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
-#        # We provide a concrete get_cache_key implementation.
-#        # In practise, this will be the only implementation.
-#        return (("value", self.value),)
+    #    def get_cache_key(self) -> Sequence[Tuple[str, Any]]:
+    #        # We provide a concrete get_cache_key implementation.
+    #        # In practise, this will be the only implementation.
+    #        return (("value", self.value),)
 
     def out(self, clock_signal: ClockSignal):
         return np.broadcast_to(self.value, clock_signal.shape)
@@ -603,7 +610,6 @@ class Constant(Module):
 
 
 class Parameter(Constant):
-
     # Initial value
     value: float
     # Lowest sane value. Defaults to 0.1 * value.
@@ -628,8 +634,8 @@ class Parameter(Constant):
         if self.hi is None:
             self.hi = 1.9 * self.value
         # TODO: Does not handle negative values!
-#        if self.hi < self.lo:
-#            raise ValueError(f"Invalid lo, hi == ({self.lo}, {self.hi})")
+        #        if self.hi < self.lo:
+        #            raise ValueError(f"Invalid lo, hi == ({self.lo}, {self.hi})")
         self.lo, self.hi = self.lo, self.hi
         self.span = self.hi - self.lo
 
@@ -677,3 +683,14 @@ def lift(a):
     """Lifts a signal from [-1,1] to [0,1]"""
     return a / 2 + 0.5
 
+
+class Print(BaseModule):
+    """Behaves like identity, but has the side effect of printing the output `inp` while it runs."""
+
+    inp: BaseModule
+    printer: Callable[[np.ndarray], str] = lambda a: str(np.mean(a))
+
+    def out(self, clock_signal):
+        val = self.inp(clock_signal)
+        print(self.printer(val))
+        return val
