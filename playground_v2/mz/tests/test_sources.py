@@ -17,6 +17,6 @@ def test_hold():
         hold = sources.Hold(base.Constant(1))
         hold.prev_value = 5.
         out = hold.out_given_inputs(base.ClockSignal.test_signal(),
-                                    src=np.array(inp).reshape(-1, 1))
-        assert out[:, 0].tolist() ==  expected_out
+                                    src=np.array(inp))
+        assert out.tolist() ==  expected_out
                         
