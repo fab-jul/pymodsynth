@@ -340,18 +340,18 @@ class JustVoice(mz.Module):
 
         bpm = 100
 
-        mz.DrumMachine("""
-            kick:   X....X....
-            snare:  ..X....X..
-            high:   X.X.X..X..
-        """,
-        kick = )
+        # mz.DrumMachine("""
+        #     kick:   X....X....
+        #     snare:  ..X....X..
+        #     high:   X.X.X..X..
+        # """,
+        # kick = )
 
         melody_cycler = 150. * mz.FreqFactors.STEP.value ** mz.Cycler(
             (0, 0, 0, 3, 6, 8, 4, 3),
         )
         #melody_cycler = mz.Cycler((0.1, 0.5, 0.7))
-        trigger = self.monitor << mz.PeriodicTriggerSource(mz.Constant(bpm))
+        trigger = mz.PeriodicTriggerSource(mz.Constant(bpm))
         #melody_cycler = RandomDropper(melody_cycler)
         melody = mz.TriggerModulator(melody_cycler, trigger)
         freq = mz.Hold(melody)
@@ -406,22 +406,22 @@ class JustVoice(mz.Module):
 
 class NeatTunes(mz.Module):
     def setup(self):
-        length = mz.constant(5000.)
+        length = mz.Constant(5000.)
         base_freq = 420.
-        freq = base_freq * piecewiselinearenvelope(
+        freq = base_freq * PiecewiseLinearEnvelope(
             xs=[0., 0.2, 0.4, 0.7],
             ys=[1., 0.7, 0.4, 0.1],
             length=length)
-        src = signalwithenvelope(
-            src=mz.timeindependentsinesource(frequency=freq),
-            env=mz.adsrenvelopegenerator(total_length=length*2))
-        bpm = mz.constant(130)
-        trigger = mz.periodictriggersource(bpm)
-        kick = mz.triggermodulator(src, triggers=trigger)
-        de = mz.delayelement(time=2, feedback=0.9, hi_cut=0.7)
-        kick = mz.simpledelay(kick, de, mix=0.4)
-        de = mz.delayelement(time=5, feedback=0.6, hi_cut=0.7)
-        kick = mz.simpledelay(kick, de, mix=0.2)
+        src = SignalWithEnvelope(
+            src=mz.TimeIndependentSineSource(frequency=freq),
+            env=mz.ADSREnvelopeGenerator(total_length=length*2))
+        bpm = mz.Constant(130)
+        trigger = mz.PeriodicTriggerSource(bpm)
+        kick = mz.TriggerModulator(src, triggers=trigger)
+        de = mz.DelayElement(time=2, feedback=0.9, hi_cut=0.7)
+        kick = mz.SimpleDelay(kick, de, mix=0.4)
+        de = mz.DelayElement(time=5, feedback=0.6, hi_cut=0.7)
+        kick = mz.SimpleDelay(kick, de, mix=0.2)
 
 
         hi_sample = SamplePlayer("samples/HatO_SP_08.wav")
