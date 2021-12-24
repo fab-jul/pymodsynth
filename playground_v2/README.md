@@ -7,10 +7,10 @@
 We recommend conda to manage dependencies. Setup a conda env as follows:
 
 ```sh
-ENV_NAM=mz  # you may use whatever you want here.
+ENV_NAME=mz  # you may use whatever you want here.
 conda deactivate
-conda create -n mz python=3.8 pip -y
-conda activate mz
+conda create -n "$ENV_NAME" python=3.8 pip -y
+conda activate "$ENV_NAME"
 ```
 
 Install pip dependencies:
