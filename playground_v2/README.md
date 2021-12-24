@@ -6,6 +6,44 @@
 - Butterworth has artefacts if the cutoff changes in each frame.
 - paramter values of that were set by knobs are sometimes overwritten.
 
+### Contributing
+
+#### Setup test on push
+
+Step 1: Make sure you can run the unit tests in a fresh terminal. This means,
+the following command should run:
+
+```sh
+python -m pytest
+```
+
+If it does not, make sure you load you virtualenv/conda.
+
+Step 2: Put the loading of the virtualenv plus the test command into `.git/hooks/pre-push`.
+For a conda user, this may look like this:
+
+```sh
+# Inside .git/hooks/pre-push:
+remote="$1"
+url="$2"
+
+# Replace this with whatever you use to load your environment.
+source /Users/fabian/Documents/miniconda3/etc/profile.d/conda.sh
+conda activate art8
+
+# Keep the following, it runs the tests and 
+# sets the correct return code.
+TMPLOG=__tmp_test_log__
+export PYTHONPATH=$(pwd)
+python -m pytest >> $TMPLOG
+RET=$?
+
+echo "Test Log $(cat $TMPLOG) RET=$RET"
+rm $TMPLOG
+exit $RET
+```
+
+
 ### Annotated examples
 
 #### Sine Source

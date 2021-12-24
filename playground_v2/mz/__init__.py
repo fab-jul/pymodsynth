@@ -1,5 +1,5 @@
 from .base import *
-from .io import *
+from .mzio import *
 from .sources import *
 from .filters import *
 from .envelopes import *

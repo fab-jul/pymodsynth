@@ -30,7 +30,7 @@ import sounddevice as sd
 from mz import filewatcher
 from mz import midi_lib
 
-from mz import io
+from mz import mzio
 from mz import base
 
 
@@ -127,7 +127,7 @@ class SynthesizerController:
 
     def __init__(self,
                  modules_file_name: str, output_gen_class: str, sample_rate, num_samples, num_channels,
-                 signal_window: io.SignalWindow, recorder: Recorder,
+                 signal_window: mzio.SignalWindow, recorder: Recorder,
                  midi_knobs_file: str, midi_port_name_regex: str):
         self.sample_rate = sample_rate
         self.num_channels = num_channels
@@ -300,7 +300,7 @@ class SynthesizerController:
         # Ingest all events.
         while EVENT_QUEUE:
             event = EVENT_QUEUE.popleft()  # We are a queue, pop from the left, append to the right.
-            if isinstance(event, io.KeyAndMouseEvent):
+            if isinstance(event, mzio.KeyAndMouseEvent):
                 # Unpacking is supposedly faster than name access.
                 dx, dy, keys, shift_is_on = event
                 # The first key needs left/right movement ("x"),
@@ -315,7 +315,7 @@ class SynthesizerController:
                 param: base.Parameter = self.knob_mapping[knob]
                 param.set_relative(rel_value)
 
-            elif isinstance(event, io.RecordKeyPressedEvent):
+            elif isinstance(event, mzio.RecordKeyPressedEvent):
                 is_recording = self.recorder.toggle_is_recording()
                 print("Recording:", is_recording)
 
@@ -348,7 +348,7 @@ def start_sound_loop(modules_file_name: str,
                         sample_rate=round(sample_rate),
                         max_recording_time_s=record_max_minutes * 60)
 
-    window, timer, signal_window = io.prepare_window(
+    window, timer, signal_window = mzio.prepare_window(
         EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
 
     syntheziser_controller = SynthesizerController(
@@ -373,7 +373,7 @@ def start_sound_loop(modules_file_name: str,
             samplerate=sample_rate):
         # Start window event loop. The audio stream will live
         # as long as the window is open.
-        io.run_window_loop(window, timer)
+        mzio.run_window_loop(window, timer)
 
 
 def list_devices():
