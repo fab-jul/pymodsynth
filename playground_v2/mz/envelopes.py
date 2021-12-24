@@ -28,9 +28,4 @@ class ADSREnvelopeGenerator(base.BaseModule):
         release = np.linspace(sustain, 0, round(release * scale))
         result = np.concatenate((attack, decay, hold, release), 0)
         # Fix off-by-one errors due to rounding, this will add/remove 1 frame to fit `total_length`.
-        if len(result) > total_length:
-            result = result[:total_length]
-        else:
-            missing = np.zeros((total_length - len(result),), dtype=result.dtype)
-            result = np.concatenate((result, missing), 0)
-        return clock_signal.add_channel_dim(result)
+        return base.pad_or_truncate(result, total_length)

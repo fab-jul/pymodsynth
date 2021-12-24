@@ -87,7 +87,6 @@ class PiecewiseLinearEnvelope(mz.Module):
             prev_x_abs = x_abs
             prev_y = y
         env = np.concatenate(pieces, 0)
-        env = clock_signal.add_channel_dim(env)
         env = clock_signal.pad_or_truncate(env, pad=env[-1, 0])
         return env
 
@@ -165,7 +164,7 @@ class Ornstein(mz.BaseModule):
 
     def out(self, clock_signal: mz.ClockSignal):
         y0 = self._last_value
-        output = np.random.standard_normal(size=clock_signal.shape) * self.eps
+        output = np.random.standard_normal(size=clock_signal.num_samples) * self.eps
         output[0] += y0
         dt = clock_signal.ts[1, 0] - clock_signal.ts[0, 0]
         exp_decay = (1-self.theta * dt) ** np.arange(clock_signal.num_samples-1, -1, -1)
@@ -181,7 +180,7 @@ class NicStein(mz.BaseModule):
     eps: float = 0.01
 
     def out_given_inputs(self, clock_signal: mz.ClockSignal, src):
-        rans = np.random.standard_normal(size=clock_signal.shape) * self.eps
+        rans = np.random.standard_normal(size=clock_signal.num_samples) * self.eps
         rans = np.cumsum(rans, axis=0)
         rans = rans - np.linspace(0, rans[-1, 0], num=clock_signal.num_samples)[:, np.newaxis]
         return rans + src

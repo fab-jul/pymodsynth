@@ -41,73 +41,86 @@ class Stateful:
         return self.value
 
 
+OUT_DTPYE = np.float32
+SAMPLE_INDICES_DTYPE = int
+
+
 class ClockSignal(NamedTuple):
+    # Shape (num_samples,)
     ts: np.ndarray
+    # Shape (num_samples,)
     sample_indices: np.ndarray
+
     sample_rate: float
     clock: "Clock"
 
+    @property
+    def num_samples(self) -> int:
+        return self.ts.shape[0]
+
     @staticmethod
     def get_out_dtype():
-        return np.float32
+        """Returns the dtype for output signals."""
+        return OUT_DTPYE
 
-    @classmethod
-    def test_signal(cls) -> "ClockSignal":
+    @staticmethod
+    def test_signal() -> "ClockSignal":
         clock = Clock()
         return clock()
 
+    # TODO: RENAME
     def assert_same_shape(self, a: np.ndarray, module_name: str):
-        if a.shape != self.shape:
+        """Makes sure that `a` has shape `(num_samples,)` """
+        if a.shape != (self.num_samples,):
             raise ValueError(
-                f"Error at `{module_name}`, output has shape {a.shape} != {self.shape}!")
+                f"Error at `{module_name}`, output has shape {a.shape} != ({self.num_samples},)!")
 
-    def zeros(self):
-        return np.zeros_like(self.ts, dtype=self.get_out_dtype())
+    def zeros(self) -> np.ndarray:
+        """Return zeros of shape (num_samples,).
+        
+        This is meant as a convenience method for modules that need to generate arrays
+        of the same shape as the clock_signal.
+        """
+        return np.zeros((self.num_samples,), dtype=self.get_out_dtype())
 
-    def change_length(self, new_length):
+    def ones(self) -> np.ndarray:
+        """Return ones of shape (num_samples,). """
+        return np.ones((self.num_samples,), dtype=self.get_out_dtype())
+
+    def change_length(self, new_length: int):
+        """Returns a new ClockSignal with the same start index but length `new_length`."""
         start = self.sample_indices[0]
         return self.clock.get_clock_signal_with_start(start, length=new_length)
 
-    @property
-    def shape(self):
-        return self.ts.shape
+    def pad_or_truncate(self, signal: np.ndarray, pad: float = 0.) -> np.ndarray:
+        """Make `signal` exactly shape `(num_samples,`), truncating if it's too long or padding with `pad`."""
+        return pad_or_truncate(signal, self.num_samples, pad=pad)
 
-    @property
-    def num_samples(self):
-        return self.ts.shape[0]
 
-    @property
-    def num_channels(self):
-        return self.ts.shape[1]
-
-    def add_channel_dim(self, signal):
-        assert len(signal.shape) == 1
-        return signal.reshape(-1, 1) * np.ones(self.num_channels)
-
-    def pad_or_truncate(self, signal, pad=0):
-        num_samples_signal, _ = signal.shape
-        if num_samples_signal == self.num_samples:
-            return signal
-        if num_samples_signal > self.num_samples:
-            return signal[:self.num_samples]
-        else:
-            missing = self.num_samples - num_samples_signal
-            return np.concatenate(
-                (signal, pad * np.ones((missing, self.num_channels), signal.dtype)), axis=0)
+def pad_or_truncate(signal, target_len: int, pad: float = 0.):
+    """Make `signal` exactly shape `(target_len,`), truncating if it's too long or padding with `pad`."""
+    num_samples_signal, = signal.shape
+    if num_samples_signal == target_len:
+        return signal
+    if num_samples_signal > target_len:
+        return signal[:target_len]
+    else:
+        missing = target_len - num_samples_signal
+        return np.concatenate(
+            (signal, pad * np.ones((missing,), signal.dtype)), axis=0)
 
 
 class Clock:
 
-    def __init__(self, num_samples: int = 2048, num_channels: int = 2, sample_rate: int = 44100.):
+    def __init__(self, num_samples: int = 2048, sample_rate: float = 44100.):
         self.num_samples = num_samples
-        self.num_channels = num_channels
         self.sample_rate = sample_rate
         self.i = 0
 
-        self.arange = np.arange(self.num_samples, dtype=int)  # Cache it.
+        self.arange = np.arange(self.num_samples, dtype=SAMPLE_INDICES_DTYPE)  # Cache it.
 
     def __repr__(self) -> str:
-        return f"Clock({self.num_samples}, {self.num_channels}, {self.sample_rate})"
+        return f"Clock({self.num_samples}, {self.sample_rate})"
 
     def __call__(self) -> ClockSignal:
         """Gets clock signal and increments i."""
@@ -117,22 +130,20 @@ class Clock:
 
     def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
         sample_indices = np.arange(start_idx, start_idx + length, 
-                                   dtype=int)  # TODO: Constant
-        return self.get_clock_signal(sample_indices)
-
-    def get_current_clock_signal(self):
-        sample_indices = self.i + self.arange
+                                   dtype=SAMPLE_INDICES_DTYPE)
         return self.get_clock_signal(sample_indices)
 
     def get_clock_signal(self, sample_indices):
         assert len(sample_indices) > 3  # TODO
         ts = sample_indices / self.sample_rate
-        # Broadcast `ts` into (num_samples, num_channels)
-        ts = ts[..., np.newaxis] * np.ones((self.num_channels,))
         return ClockSignal(ts, sample_indices, self.sample_rate, clock=self)
 
+    def get_current_clock_signal(self):
+        sample_indices = self.i + self.arange
+        return self.get_clock_signal(sample_indices)
+
     def get_clock_signal_num_samples(self, num_samples: int):
-        return self.get_clock_signal(np.arange(num_samples, dtype=int))
+        return self.get_clock_signal(np.arange(num_samples, dtype=SAMPLE_INDICES_DTYPE))
 
 
 class NoCacheKeyError(Exception):
@@ -173,7 +184,7 @@ class ModuleMeta(type):
             # raise ValueError
             # TODO
             pass
-        cls = dataclasses.dataclass(
+        cls = dataclasses.dataclass(  # pytype: disable=wrong-keyword-args
             cls, eq=True,
             # TODO: This kind of assumes modules are immutable, which they
             # are not really.
@@ -377,7 +388,7 @@ class BaseModule(metaclass=ModuleMeta):
             # to reduce time complexity.
             yield from submodule._get_named_submodules(submodule_prefix)
 
-    def get_params_dict(self) -> Mapping[str, "BaseModule"]:
+    def get_params_dict(self) -> Mapping[str, "Parameter"]:
         return self._filter_submodules_by_cls(Parameter)
 
     def _filter_submodules_by_cls(self, cls):
@@ -603,7 +614,7 @@ class Constant(Module):
     #        return (("value", self.value),)
 
     def out(self, clock_signal: ClockSignal):
-        return np.broadcast_to(self.value, clock_signal.shape)
+        return np.broadcast_to(self.value, shape=(clock_signal.num_samples,))
 
     def out_single_value(self, _) -> float:
         return self.value

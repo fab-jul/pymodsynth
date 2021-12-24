@@ -23,9 +23,10 @@ class SineSource(base.Module):
                          frequency: np.ndarray, 
                          amplitude: np.ndarray,
                          phase: np.ndarray):
+        # TODO: Move to clock signal, add `dt` function.
         dt = np.mean(clock_signal.ts[1:] - clock_signal.ts[:-1])
         cumsum = np.cumsum(frequency * dt, axis=0) + self._last_cumsum_value
-        self._last_cumsum_value = cumsum[-1, :]
+        self._last_cumsum_value = cumsum[-1]
         out = amplitude * np.sin((2 * np.pi * cumsum) + phase)
         return out
 
@@ -110,8 +111,7 @@ class PeriodicTriggerSource(base.Module):
         triggers = ((clock_signal.sample_indices + self.rel_offset * samples_per_pattern_element)
                     % samples_per_pattern_element == 0)
         # Elements are in {1, 0}.
-        triggers = np.ones(clock_signal.shape) * triggers.reshape(-1, 1)
-        return triggers
+        return clock_signal.ones() * triggers
 
 
 class Hold(base.Module):
@@ -139,10 +139,10 @@ class Hold(base.Module):
             indices_non_zero.insert(0, 0)
         indices_non_zero.append(src.shape[0])
         res = np.concatenate(
-            [np.ones((end-start, 1)) * src[start, :] 
-                              for start, end in zip(indices_non_zero, indices_non_zero[1:])],
-                              axis=0)
-        self.prev_value = res[-1, 0]
+            [np.ones((end-start, 1)) * src[start] 
+             for start, end in zip(indices_non_zero, indices_non_zero[1:])],
+            axis=0)
+        self.prev_value = res[-1]
         return res
 
 
@@ -183,10 +183,9 @@ class Cycler(base.BaseModule):
         el = self.seq[min(self.current_i, len(self.seq)-1)]
         self.current_i = (self.current_i + 1) % len(self.seq)
         if self.match_clock_shape:
-            return el * np.ones(clock_signal.shape, dtype=clock_signal.get_out_dtype())
+            return el * clock_signal.ones()
         else:
-            output = np.array([el], dtype=clock_signal.get_out_dtype())
-            return clock_signal.add_channel_dim(output)
+            return np.array([el], dtype=clock_signal.get_out_dtype())
 
  
 @helpers.mark_for_testing(shape_maker=lambda: Cycler((1, 2, 3)),
@@ -228,15 +227,13 @@ class TriggerModulator(base.Module):
                 remainder = latest_envelope_end - clock_signal.num_samples
             else:
                 remainder = 0
-            current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
+            current_signal = np.pad(current_signal, pad_width=((0, remainder)))
             for i, envelope in zip(trigger_indices, envelopes):
-                if len(envelope.shape) != 2:
-                    envelope = clock_signal.add_channel_dim(envelope)
-                current_signal[i:i + len(envelope), :] = envelope
+                current_signal[i:i + len(envelope)] = envelope
         # combine the old and new signal using the given method
         max_len = max(len(previous_signal), len(current_signal))
-        previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
-        current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+        previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal))))
+        current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal))))
         result = self.combinator(previous_signal, current_signal)
         self.previous = result[clock_signal.num_samples:]
         res = result[:clock_signal.num_samples]

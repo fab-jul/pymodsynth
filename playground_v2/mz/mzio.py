@@ -7,9 +7,11 @@ import moderngl
 import moderngl_window as mglw
 import numpy as np
 
+from mz import base
+
+
 # Signal array are arrays of shape (num_samples, 5), where the 5 channels
 # represent (x coordinates, y coor)
-
 _SignalArray = np.ndarray
 _SIGNAL_ARRAY_X = 0
 _SIGNAL_ARRAY_Y = 1
@@ -73,7 +75,6 @@ class SignalWindow(mglw.WindowConfig):
                  timer,
                  event_queue: collections.deque,
                  num_samples: int,
-                 num_channels: int,
                  ):
         super().__init__(ctx=ctx, wnd=wnd, timer=timer)
 
@@ -83,7 +84,7 @@ class SignalWindow(mglw.WindowConfig):
         self._current_keys = []  # They are sorted.
         self._event_queue = event_queue
 
-        self._signal = np.zeros((num_samples, num_channels), np.float32)
+        self._signal = np.zeros((num_samples,), base.OUT_DTPYE)
         data_samples = 2 * num_samples
         # Static vectors needed to draw signal.
         self.x = np.linspace(-1.0, 1.0, data_samples)
@@ -177,7 +178,7 @@ class SignalWindow(mglw.WindowConfig):
         )
 
         # Only visualize first channel.
-        signal = self._signal[:, 0]  # Shape: (num_samples,)
+        signal = self._signal[:]  # Shape: (num_samples,)
         num_samples = len(signal)
         for subwindow, sig in self.iter_with_subwindow(
             # TODO: Could draw {1, ..., 4} signals here!
@@ -212,7 +213,7 @@ class SignalWindow(mglw.WindowConfig):
 
 def prepare_window(event_queue: collections.deque,
                    num_samples: int,
-                   num_channels: int) -> Tuple[mglw.BaseWindow, mglw.Timer, SignalWindow]:
+                   ) -> Tuple[mglw.BaseWindow, mglw.Timer, SignalWindow]:
     """This is a copy of moderngl_window.run_window_config.
 
     We add some features:
@@ -242,7 +243,7 @@ def prepare_window(event_queue: collections.deque,
     timer = mglw.Timer()
     signal_window = SignalWindow(
         ctx=window.ctx, wnd=window, timer=timer, event_queue=event_queue,
-        num_samples=num_samples, num_channels=num_channels)
+        num_samples=num_samples)
     window.config = signal_window
     return window, timer, signal_window
 
@@ -285,7 +286,7 @@ def _test():
     import queue
     q = queue.Queue()
     window, timer, signal_window = prepare_window(
-        q, num_samples=2048, num_channels=1)
+        q, num_samples=2048)
     s = np.concatenate((np.linspace(0, 1, 512),
                         np.linspace(1, 0, 2048-512)), axis=0)
     signal_window.set_signal(s.reshape(-1, 1))

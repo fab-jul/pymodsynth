@@ -19,8 +19,7 @@ def basic_reverb_ir(delay: int, echo: int, p: float):
 
     h = np.random.binomial(1, p, delay + echo) * np.concatenate(
         (np.zeros(delay), decayer), axis=0)
-    h = h[:, np.newaxis]
-    h[0, :] = 1  # Always repeat the signal also!
+    h[0] = 1  # Always repeat the signal also!
     return h
 
 
@@ -53,7 +52,7 @@ class Reverb(base.Module):
         h = basic_reverb_ir(delay, echo, p)
 
         convolved = scipy.signal.convolve(src, h, mode="valid")
-        return convolved[-clock_signal.num_samples:, :]
+        return convolved[-clock_signal.num_samples:]
 
 
 @functools.lru_cache(maxsize=512)
@@ -79,7 +78,6 @@ class ButterworthFilter(base.Module):
                          inp, f_low: float, f_high: float):
         if self._last_signal is None:
             self._last_signal = clock_signal.zeros()
-        num_samples, num_channels = clock_signal.shape
 
         f_low = np.clip(f_low, 1e-10, clock_signal.sample_rate/2)
         f_high = np.clip(f_high, 1e-10, clock_signal.sample_rate/2)
@@ -91,9 +89,8 @@ class ButterworthFilter(base.Module):
         f_high = round(f_high)
         fs = {"lp": f_low, "hp": f_high, "bp": (f_low, f_high)}[self.mode]
         sos = _get_me_some_butter(self.order, fs, self.mode, int(clock_signal.sample_rate))
-        filtered_signal = scipy.signal.sosfilt(sos, full_signal[:,0])[-num_samples:, np.newaxis]
-        filtered_signal = filtered_signal * np.ones(num_channels)
-        return filtered_signal[-num_samples:, :]
+        filtered_signal = scipy.signal.sosfilt(sos, full_signal)[-clock_signal.num_samples:]
+        return filtered_signal
 
 
 # TODO(dariok,fab-jul): Make DelayElement into a module such that we can interactively
