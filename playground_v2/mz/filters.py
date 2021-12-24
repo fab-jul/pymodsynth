@@ -56,9 +56,9 @@ class Reverb(base.Module):
         return convolved[-clock_signal.num_samples:, :]
 
 
-@functools.lru_cache(maxsize=128)
+@functools.lru_cache(maxsize=512)
 def _get_me_some_butter(order, fs, mode, sampling_rate):
-    print("MAKING BUTTER")
+    print("MAKING BUTTER", order, fs, mode, sampling_rate)
     return scipy.signal.butter(order, fs, mode, fs=sampling_rate, output='sos')
 
 
@@ -87,6 +87,8 @@ class ButterworthFilter(base.Module):
         full_signal = np.concatenate((self._last_signal, inp), axis=0)
         self._last_signal = inp
 
+        f_low = round(f_low)
+        f_high = round(f_high)
         fs = {"lp": f_low, "hp": f_high, "bp": (f_low, f_high)}[self.mode]
         sos = _get_me_some_butter(self.order, fs, self.mode, int(clock_signal.sample_rate))
         filtered_signal = scipy.signal.sosfilt(sos, full_signal[:,0])[-num_samples:, np.newaxis]
@@ -100,7 +102,7 @@ class ButterworthFilter(base.Module):
 # TODO(dariok): do we have access to the sampling frequency of the whole mod synt?
 # if yes it's nice cause we could do actual physical values for example milliseconds for delay
 # and hz for filter cutoffs...
-@dataclasses.dataclass
+@dataclasses.dataclass(unsafe_hash=True)
 class DelayElement:
     # number of buffer steps the signal is delayed
     time: int

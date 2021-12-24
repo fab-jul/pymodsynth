@@ -1,5 +1,11 @@
 ## WIP Guide
 
+### Known issues
+
+- sometimes we get "object not hashable" errors.
+- Butterworth has artefacts if the cutoff changes in each frame.
+- paramter values of that were set by knobs are sometimes overwritten.
+
 ### Contributing
 
 #### Setup test on push
@@ -36,6 +42,7 @@ echo "Test Log $(cat $TMPLOG) RET=$RET"
 rm $TMPLOG
 exit $RET
 ```
+
 
 ### Annotated examples
 
