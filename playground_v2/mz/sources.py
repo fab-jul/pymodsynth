@@ -74,6 +74,7 @@ _EPS_ALPHA = 1e-7
 
 
 # TODO: Does not properly handle frequency = LFO!
+@helpers.mark_for_testing()
 class SkewedTriangleSource(base.Module):
     """A triangle that has the peak at alpha * period.
     
@@ -139,7 +140,7 @@ class Hold(base.Module):
             indices_non_zero.insert(0, 0)
         indices_non_zero.append(src.shape[0])
         res = np.concatenate(
-            [np.ones((end-start, 1)) * src[start] 
+            [np.ones((end-start,)) * src[start] 
              for start, end in zip(indices_non_zero, indices_non_zero[1:])],
             axis=0)
         self.prev_value = res[-1]

@@ -298,7 +298,7 @@ class SynthesizerController:
         current_output = self.output_gen(clock_signal)
 
         if len(current_output.shape) == 1:
-            # Add channel dimension
+            # Convert Mono to Stereo by adding channel dimension.
             current_output = current_output[:, np.newaxis] * np.ones((self.num_channels,),
                                                                      dtype=current_output.dtype)
         elif len(current_output.shape) != 2:

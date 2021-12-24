@@ -9,43 +9,6 @@ import numpy as np
 import mz
 
 
-class SimpleSine(mz.Module):
-
-    def setup(self):
-        self.out = mz.SineSource(frequency=mz.Parameter(144, key="f"))
-
-
-class _SimpleNoteSampler(mz.Module):
-
-    src: mz.Module
-    env: mz.Module
-
-    def out_given_inputs(self, _, src, env):
-        return src * env
-
-
-array = ...
-
-
-class SineSourceSample(mz.BaseModule):
-
-    length: mz.Parameter = mz.Constant(512)
-
-    def setup(self):
-        self.sine = mz.SineSource(frequency=mz.Constant(220))
-
-    def out_given_inputs(self, clock_signal, length: float):
-        # Clock signal starts at 0 and is `length` long.
-        clock_signal_for_sine = clock_signal.of_length(length)
-        return self.sine(clock_signal_for_sine)
-
-
-# class TriggerModulator(...):
-# 
-#     def out(self, clock_signal):
-#         pass
-
-
 class SignalWithEnvelope(mz.BaseModule):
 
     src: mz.BaseModule
@@ -87,7 +50,7 @@ class PiecewiseLinearEnvelope(mz.Module):
             prev_x_abs = x_abs
             prev_y = y
         env = np.concatenate(pieces, 0)
-        env = clock_signal.pad_or_truncate(env, pad=env[-1, 0])
+        env = clock_signal.pad_or_truncate(env, pad=env[-1])
         return env
 
 # TODO: why does stuff need to be hashable for math
@@ -97,12 +60,15 @@ class SamplePlayer(mz.BaseModule):
     wav_file_p: str
 
     def setup(self):
+        # TODO: Should check w/ clock_signal.
         self.data, samplerate = sf.read(self.wav_file_p)
 
-    def out(self, clock_signal):
-        return self.data[:, :clock_signal.num_channels]
+    def out(self, _):
+        # TODO: Only used channel 0 at the moment.
+        return self.data[:, 0]
 
 
+# TODO
 class TODOBUg(mz.Module):
     def setup(self):
 
@@ -560,11 +526,6 @@ class Testing1(mz.Module):
         self.seq = mz.MelodySequencer(
             bpm=mz.Constant(120),
             pattern=mz.Pattern([0, 0, 0, 1], note_value=1/16.)
-        )
-
-        self.sampler = _SimpleNoteSampler(
-            src=mz.SineSource(frequency=mz.Constant(220)),# ** (mz.FreqFactors.STEP.value * self.seq.output("note"))),
-            env=mz.ADSREnvelopeGenerator(hold=self.seq.output("hold"))
         )
 
         self.out = mz.TriggerModulator(sampler=self.sampler, triggers=self.seq.output("triggers"))
