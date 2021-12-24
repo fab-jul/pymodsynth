@@ -679,6 +679,10 @@ class FreqFactors(enum.Enum):
     OCTAVE = 2.
     STEP = 1.059463
 
+def lift(a):
+    """Lifts a signal from [-1,1] to [0,1]"""
+    return a / 2 + 0.5
+
 
 class Print(BaseModule):
     """Behaves like identity, but has the side effect of printing the output `inp` while it runs."""
