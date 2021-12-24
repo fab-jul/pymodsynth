@@ -4,14 +4,12 @@ Modular Synthesizer in Python
 
 Core Idea: Modular Synthesizers are "just" function generators with a nice user interface. Can we build something similar in Python?
 
-## First usage
+# ⚠  Experimental Project  ⚠
 
-_TODO_: We should clean up the project structure.
+This project is highly experimental still.
+To explore the current version, see [playground_v2/README.md](https://github.com/fab-jul/pymodsynth/tree/main/playground_v2).
 
-```sh
-export PYTHONPATH=$(pwd)
-python playground/gimme_sound.py --output_gen_class=BabiesFirstSynthie
-```
+---
 
 ## Contribute
 
@@ -34,7 +32,7 @@ git push origin -d "$BRANCH"  # Delete remotely
   - [ ] Cache outputs.
 - Modules:
   - [ ] Kick and Snare (drum machine).
-  - [ ] Filters (low/mi/high - buttersworth).
+  - [x] Filters (low/mi/high - buttersworth).
   - [ ] Filters (decay / reverb etc.)
   - [ ] Record with microphone.
   - [ ] Input samples.

@@ -1,10 +1,45 @@
 ## WIP Guide
 
+### Demo
+
+#### Setup python
+
+We recommend conda to manage dependencies. Setup a conda env as follows:
+
+```sh
+ENV_NAM=mz  # you may use whatever you want here.
+conda deactivate
+conda create -n mz python=3.8 pip -y
+conda activate mz
+```
+
+Install pip dependencies:
+
+```sh
+# In the root folder of this repo.
+pip install -r requirements.txt
+```
+
+#### Run demo
+
+```sh
+# In the root folder of this repo.
+cd playground_v2
+python -m mz -f demo.py -c DemoModule
+```
+
+This run the `DemoModule` class in `playground_v2/demo.py`.
+
 ### Known issues
 
 - sometimes we get "object not hashable" errors.
 - Butterworth has artefacts if the cutoff changes in each frame.
 - paramter values of that were set by knobs are sometimes overwritten.
+
+### TODO
+
+- shape issues w/ channels
+- automatic constant promotion
 
 ### Contributing
 
