@@ -148,7 +148,7 @@ class NicStein(mz.BaseModule):
     def out_given_inputs(self, clock_signal: mz.ClockSignal, src):
         rans = np.random.standard_normal(size=clock_signal.num_samples) * self.eps
         rans = np.cumsum(rans, axis=0)
-        rans = rans - np.linspace(0, rans[-1, 0], num=clock_signal.num_samples)[:, np.newaxis]
+        rans = rans - np.linspace(0, rans[-1], num=clock_signal.num_samples)
         return rans + src
                                 
 
