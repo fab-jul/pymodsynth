@@ -134,7 +134,18 @@ class DelayElement:
         else:
             self.delay = delayed_signal + self.delay * self.feedback
 
-        self.delay = scipy.signal.lfilter(self.filter_coeff_b, self.filter_coeff_a, self.delay)
+        # TODO(fab-jul,dariok): There is some bug here, where lfilter has axis=-1 as default,
+        # which used to be the channel dim, but which we do not have anymore.
+        # Figure out what exactly axis=-1 does here, for some reason it seem sto reduce
+        # amplitude, see colab.
+        # We simulate the old stereo version here for backwards compatibility.
+        self.delay = scipy.signal.lfilter(
+            self.filter_coeff_b, self.filter_coeff_a, 
+            # Simulate old stereo version of the code by adding a channel dim ...
+            self.delay[:, np.newaxis],
+            axis=-1,
+            # ... and removing it again.
+            )[:, 0]
 
         delay = self.delay * self.gain
 
