@@ -1,4 +1,6 @@
 import collections
+import time
+import contextlib
 from typing import TypeVar
 import numpy as np
 
@@ -102,3 +104,21 @@ def mark_for_testing(**kwargs):
 
 def iter_marked_classes():
     yield from (marked_class for marked_class in _MARKED_CLASSES)
+
+
+class Timer:
+
+    def __init__(self, emit_every:int = 100):
+        self._times = []
+        self._emit_every = emit_every
+
+    @contextlib.contextmanager
+    def __call__(self, name: str):
+        start = time.time()
+        yield
+        self._times.append(time.time() - start)
+        if len(self._times) % self._emit_every == 0:
+            avg = np.mean(self._times)
+            print(f">> {name}: {avg:.3e}s avg")
+            self._times = []
+

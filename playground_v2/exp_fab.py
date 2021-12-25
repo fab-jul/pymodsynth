@@ -9,6 +9,16 @@ import numpy as np
 import mz
 
 
+class Test(mz.Module):
+
+    def setup(self):
+        src = mz.SkewedTriangleSource(alpha=mz.Constant(0.99))
+        f = mz.Butterworth(src, cutoffs=mz.LFO(lo=100, hi=500),
+                           mode="lp")
+        self.out = f
+
+
+
 class SignalWithEnvelope(mz.BaseModule):
 
     src: mz.BaseModule
@@ -401,8 +411,9 @@ class NeatTunes(mz.Module):
 #            f_high=mz.Parameter(5000, lo=1., hi=10000, key="f", clip=True), mode="hp")
 
         melody_cycler = 120. * mz.FreqFactors.STEP.value ** mz.Cycler(
+            (1, 2, 3, 8)
             #(12,)*8 + (8,)*8 + (5,)*8 + (0, )*4 + (1, 0, 1, 5))
-            (12,)*8 + (8,)*8 + (5,)*8 + (0, )*4 + (5,)*8 + (8,)*8 + (12,)*8
+            #(12,)*8 + (8,)*8 + (5,)*8 + (0, )*4 + (5,)*8 + (8,)*8 + (12,)*8
         )
         melody = mz.TriggerModulator(melody_cycler, trigger)
         freq = mz.Hold(melody)
@@ -454,9 +465,9 @@ class NeatTunes(mz.Module):
         #bassline = mz.SimpleDelay(bassline, de, mix=0.4)
         #bassline = mz.Reverb(bassline)
 
-        self.out = (drums + 
-                    voice*mz.Parameter(0.4, 0., 1., knob="fx2_1") +
-                    bassline*0.2
+        self.out = (drums #+ 
+                    #voice*mz.Parameter(0.4, 0., 1., knob="fx2_1") +
+                    #bassline*0.2
                     )
 
 
