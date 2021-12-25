@@ -12,7 +12,6 @@ import itertools
 import collections
 import datetime
 import getpass
-from os import curdir, getcwd
 import re
 import dataclasses
 import importlib

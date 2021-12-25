@@ -2,7 +2,6 @@
 import numpy as np
 import dataclasses
 from typing import List
-from numpy import exp, sign
 import pytest
 
 from unittest import mock
