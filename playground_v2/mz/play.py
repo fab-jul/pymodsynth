@@ -12,7 +12,6 @@ import itertools
 import collections
 import datetime
 import getpass
-from os import getcwd
 import re
 import dataclasses
 import importlib
@@ -131,7 +130,7 @@ class SynthesizerController:
                  midi_knobs_file: str, midi_port_name_regex: str):
         self.sample_rate = sample_rate
         self.num_channels = num_channels
-        self.clock = base.Clock(num_samples, num_channels, sample_rate)
+        self.clock = base.Clock(num_samples, sample_rate)
         self.last_t = time.time()
         self.signal_window = signal_window
         self.recorder = recorder
@@ -295,7 +294,16 @@ class SynthesizerController:
         if status:
             print(status, file=sys.stderr)
         clock_signal = self.clock()
-        outdata[:] = self.output_gen(clock_signal)
+        current_output = self.output_gen(clock_signal)
+
+        if len(current_output.shape) == 1:
+            # Convert Mono to Stereo by adding channel dimension.
+            current_output = current_output[:, np.newaxis] * np.ones((self.num_channels,),
+                                                                     dtype=current_output.dtype)
+        elif len(current_output.shape) != 2:
+            raise ValueError(f"Invalid shape: {current_output.shape}!")
+
+        outdata[:] = current_output
 
         # Ingest all events.
         while EVENT_QUEUE:
@@ -322,7 +330,8 @@ class SynthesizerController:
             else:
                 raise TypeError(event)
 
-        self.signal_window.set_signal(outdata, suppl=list(
+        # TODO: may be able to remove copy within window.
+        self.signal_window.set_signal(outdata[:, 0], suppl=list(
             #itertools.chain.from_iterable(m for m in self.output_gen._monitor_senders)))
         ))
         self.recorder.push(outdata)
@@ -349,7 +358,7 @@ def start_sound_loop(modules_file_name: str,
                         max_recording_time_s=record_max_minutes * 60)
 
     window, timer, signal_window = mzio.prepare_window(
-        EVENT_QUEUE, num_samples=num_samples, num_channels=num_channels)
+        EVENT_QUEUE, num_samples=num_samples)
 
     syntheziser_controller = SynthesizerController(
         modules_file_name=modules_file_name,

@@ -3,14 +3,6 @@ from typing import TypeVar
 import numpy as np
 
 
-def is_class_and_subclass(cls, t):
-    """Safe version of `issubclass` that returns False if `cls` is not an actual class."""
-    try:
-        return issubclass(cls, t)
-    except TypeError:
-        return False
-
-
 class LRUDict:
 
     def __init__(self, capacity: int = 64) -> None:

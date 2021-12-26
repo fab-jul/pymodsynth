@@ -2,7 +2,6 @@
 import numpy as np
 import dataclasses
 from typing import List
-from numpy import exp
 import pytest
 
 from unittest import mock
@@ -24,6 +23,51 @@ class NodeModule(base.Module):
 
     def out(self, clock_signal):
         return clock_signal.zeros()
+
+
+def test_clock_signal():
+    num_samples = 128
+    c = base.ClockSignal(np.linspace(0, 1, num_samples),
+                         np.arange(num_samples, dtype=base.SAMPLE_INDICES_DTYPE),
+                         sample_rate=44100,
+                         clock=base.Clock(num_samples, 44100))
+    assert c.num_samples == num_samples
+    c.assert_same_shape(np.ones(num_samples,), module_name="Testing")
+    with pytest.raises(ValueError):
+        c.assert_same_shape(np.ones(num_samples + 1,), module_name="Testing")
+    assert c.zeros().shape == (num_samples,)
+    assert c.ones().shape == (num_samples,)
+
+    # Make c shorter.
+    new_c = c.change_length(64)
+    assert new_c.num_samples == 64
+    assert new_c.sample_indices[0] == c.sample_indices[0]
+
+    # Make c longer.
+    new_c = c.change_length(192)
+    assert new_c.num_samples == 192
+    assert new_c.sample_indices[0] == c.sample_indices[0]
+
+def test_clock_signal_pad_or_truncate():
+    num_samples = 128
+    c = base.ClockSignal(np.linspace(0, 1, num_samples),
+                         np.arange(num_samples, dtype=base.SAMPLE_INDICES_DTYPE),
+                         sample_rate=44100,
+                         clock=base.Clock(num_samples, 44100))
+
+    # Same length
+    signal = np.arange(128)
+    np.testing.assert_equal(signal, c.pad_or_truncate(signal))
+
+    # Truncate
+    signal = np.arange(192)
+    np.testing.assert_equal(signal[:128], c.pad_or_truncate(signal))
+
+    # Pad
+    signal = np.arange(64)
+    output = c.pad_or_truncate(signal)
+    np.testing.assert_equal(output[:64], signal)
+    np.testing.assert_equal(output[64:], 0)
 
 
 def test_cached_sampling():
@@ -90,12 +134,12 @@ class test_multi_output_module():
     foo = m.output("foo")
     bar = m.output("bar")
     foo_out = foo(signal)
-    assert foo_out[0, 0] == 1
+    assert foo_out[0] == 1
 
     final = foo + bar
 
     final_out = final(signal)
-    assert final_out[0, 0] == 11
+    assert final_out[0] == 11
 
 
 def test_direct_submodules():
@@ -155,14 +199,14 @@ def test_prepend_past():
             return clock_signal.sample_indices 
             
     m = M(src=ArangeSource())
-    clock = base.Clock(num_samples=4, num_channels=2, sample_rate=1)
+    clock = base.Clock(num_samples=4, sample_rate=1)
 
     m(clock())
     m(clock())
     m(clock())
     m(clock())
 
-    clock_2 = base.Clock(num_samples=4, num_channels=2, sample_rate=1)
+    clock_2 = base.Clock(num_samples=4, sample_rate=1)
     indices_0 = clock_2().sample_indices
     indices_1 = clock_2().sample_indices
     indices_2 = clock_2().sample_indices
@@ -339,16 +383,11 @@ def num_samples(request):
     return request.param
 
 
-@pytest.fixture(params=[1, 2], ids=lambda c: f"num_channels={c}")
-def num_channels(request):
-    return request.param
-
-
 @pytest.fixture()
-def clock_signal(num_samples, num_channels):
-    clock = base.Clock(num_samples=num_samples, num_channels=num_channels)
+def clock_signal(num_samples):
+    clock = base.Clock(num_samples=num_samples)
     clock_signal = clock()
-    assert clock_signal.shape == (num_samples, num_channels)
+    assert clock_signal.num_samples == num_samples
     return clock_signal
 
 
@@ -384,7 +423,7 @@ def test_math_out():
     result = const_ten + const_five
     signal = base.ClockSignal.test_signal()
     out = result(signal)
-    assert out.shape == signal.shape
+    assert out.shape == (signal.num_samples,)
 
 
 def test_block_future_cache():

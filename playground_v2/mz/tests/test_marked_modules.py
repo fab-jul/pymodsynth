@@ -23,16 +23,11 @@ def num_samples(request):
     return request.param
 
 
-@pytest.fixture(params=[1, 2], ids=lambda c: f"num_channels={c}")
-def num_channels(request):
-    return request.param
-
-
 @pytest.fixture()
-def clock_signal(num_samples, num_channels):
-    clock = base.Clock(num_samples=num_samples, num_channels=num_channels)
+def clock_signal(num_samples):
+    clock = base.Clock(num_samples=num_samples)
     clock_signal = clock()
-    assert clock_signal.shape == (num_samples, num_channels)
+    assert clock_signal.num_samples == num_samples
     return clock_signal
 
 
