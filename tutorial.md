@@ -7,6 +7,10 @@ If you want to synthesize music immediately without studying the concepts, clone
 
 [IDE setup goes here]
 
+Run Configuration:
+- Module: mz
+- Parameters: -f quickstart.py -c BabiesFirstSynthie
+
 ### A Toy Example
 *Everything is a Module*
 
@@ -54,18 +58,18 @@ Have you listened to the toy example? Did you find the skew angle changes too sl
 ```python
 self.lfo = mz.SineSource(frequency=mz.Parameter(0.66, key='l', lo=0.1, hi=60, clip=True))
 ```
-Save the file and highlight the output window. Now (if the program did not crash) you should be able to press 'l' and change the lfo frequency in the optionally given lo-hi range. 
+Save the file and highlight the output window. Now (if the program did not crash) you should be able to press 'l' and change the `lfo` frequency in the optionally given lo-hi range. 
 
-We call this **hot reloading** and it turns out to be extremely useful during exploration. While there are limitations, you can hot reload in many situations. For example, try to add another source to `setup()` and don't forget to add it to `self.out` at the end (or directly add it like in the snippet below). If you save the file before it can parse successfully, the program should not crash, but cannot reload. Fix the code, and try again. 
+We call this **hot reloading**, and it turns out to be extremely useful during exploration. While there are limitations, you can hot reload in many situations. For example, try to add another source to `setup()` and don't forget to add it to `self.out` at the end (or directly add it like in the snippet below). If you save the file before it can parse successfully, the program should not crash, but cannot reload either. Fix the syntax, and try again. 
 
 ```python
 self.out = self.dancing_triangle + self.low_hum * 0.5 + mz.SineSource(frequency=mz.Constant(880))
 ```
-
+Hot reloading saves time and gives you the flexibility to change a running track - a step towards the true experience of physical modular synthesis. 
 
 # Motivation and Basic Idea
 
-## Signal Path
+## Signal Path and Buffer Constraints
 
 # Types
 
