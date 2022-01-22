@@ -1,4 +1,6 @@
 # NEEDS
+
+# TODO: Only use the parts of torch that we need.
 # pip install torch
 # pip install ninja
 
@@ -29,12 +31,8 @@ def _cpp_backend():
 # ------------------------------------------------------------------------------
 
 
-def _quantize(a: np.ndarray, lo: float, hi: float, num: int):
-    a = np.clip(a, lo, hi)
-    return np.round((a - lo) / (hi - lo) * (num - 1)).astype(np.int32)
-
-
 class Butterworth(base.Module):
+  """C++ backed Butterworth filter."""
 
   src: base.Module
   cutoffs: base.Module = base.Constant(200.)
@@ -43,6 +41,8 @@ class Butterworth(base.Module):
   # and `cutoffs` is used as the low cutoff.
   cutoffs_bp_hi: base.Module = base.Constant(1000.)
 
+  # TODO: This is still WIP, we currently only support `lp` (low pass).
+  # TODO: Use enum.
   mode: str = "lp"  # One of lp, hp, bp.
   order: int = 4
 
@@ -52,6 +52,7 @@ class Butterworth(base.Module):
         raise NotImplementedError("Need High Pass for bandpass!")
       elif self.mode == "hp":
         raise NotImplementedError("High Pass not implemented yet!")
+
       # TODO: HP shoul use same number of coeffs,
       # but backend not implemented yet.
       elif self.mode in ("lp", "hp"):  
