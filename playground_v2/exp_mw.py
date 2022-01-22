@@ -17,15 +17,25 @@ class SignalWithEnvelope(mz.BaseModule):
         return env * src
 
 
+class BabiesFirstSynthie(mz.Module):
+    def setup(self):
+        self.base_frequency = mz.Parameter(220, key='f')
+        self.lfo = mz.SineSource(frequency=mz.Parameter(0.66, key='l', lo=0.1, hi=60, clip=True))
+        self.dancing_triangle = mz.SkewedTriangleSource(frequency=self.base_frequency,
+                                                        alpha=mz.lift(self.lfo))
+        self.low_hum = mz.SineSource(frequency=mz.Parameter(66, key='b'))
+        self.out = self.dancing_triangle + self.low_hum * 0.5 + mz.SineSource(frequency=mz.Constant(880))
+
 class Test(mz.Module):
     def setup(self):
         # self.lfo = mz.SineSource(frequency=(mz.Parameter(3) + 1)/2)
         # self.src = mz.SineSource(frequency=self.lfo * 440)
         # self.out = self.src
         self.sick = mz.SkewedTriangleSource(frequency=P(220), alpha=mz.lift(mz.SineSource(P(1))))
-        self.out = mz.ButterworthFilter(self.sick,
-                                        f_low=P(10, key='k', lo=1, hi=40000, clip=True),
-                                        f_high=P(10000, key='l', lo=1, hi=40000, clip=True),
-                                        mode="bp")
+        self.out = self.sick
+        # self.out = mz.ButterworthFilter(self.sick,
+        #                                 f_low=P(10, key='k', lo=1, hi=40000, clip=True),
+        #                                 f_high=P(10000, key='l', lo=1, hi=40000, clip=True),
+        #                                 mode="bp")
 
 
