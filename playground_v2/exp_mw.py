@@ -19,12 +19,12 @@ class SignalWithEnvelope(mz.BaseModule):
 
 class BabiesFirstSynthie(mz.Module):
     def setup(self):
-        self.base_frequency = mz.Parameter(220, key='f')
-        self.lfo = mz.SineSource(frequency=mz.Parameter(0.66, key='l', lo=0.1, hi=60, clip=True))
-        self.dancing_triangle = mz.SkewedTriangleSource(frequency=self.base_frequency,
-                                                        alpha=mz.lift(self.lfo))
-        self.low_hum = mz.SineSource(frequency=mz.Parameter(66, key='b'))
-        self.out = self.dancing_triangle + self.low_hum * 0.5 + mz.SineSource(frequency=mz.Constant(880))
+        base_frequency = mz.Parameter(220, key='f')
+        lfo = mz.SineSource(frequency=mz.Parameter(0.66, key='l', lo=0.1, hi=60, clip=True))
+        dancing_triangle = mz.SkewedTriangleSource(frequency=base_frequency,
+                                                        alpha=mz.lift(lfo))
+        low_hum = mz.SineSource(frequency=mz.Parameter(66, key='b'))
+        self.out = dancing_triangle + low_hum * 0.5
 
 class Test(mz.Module):
     def setup(self):

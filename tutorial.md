@@ -53,7 +53,7 @@ Many periodic signals have codomain [-1, 1], but for many parameters, only posit
 Finally, the output of this Module is a weighted sum - expressed with overloaded arithmetic operators. Depending on the downstream consumers, this might need to be compressed, lifted or otherwise processed. 
 
 ### Hot Reloading
-Have you listened to the toy example? Did you find the skew angle changes too slowly? It's a shame we made its frequency, `lfo` a `Constant` instead of a `Parameter`, which would be changeable at runtime. But it is not too late. Leave the program running, and edit the code to:
+Have you listened to the toy example? Did you find the skew angle changes too slowly? It's a shame we made its frequency, `lfo`, a `Constant` instead of a `Parameter`, which would be changeable at runtime. But it is not too late. Leave the program running, and edit the code to:
 
 ```python
 self.lfo = mz.SineSource(frequency=mz.Parameter(0.66, key='l', lo=0.1, hi=60, clip=True))
@@ -66,6 +66,13 @@ We call this **hot reloading**, and it turns out to be extremely useful during e
 self.out = self.dancing_triangle + self.low_hum * 0.5 + mz.SineSource(frequency=mz.Constant(880))
 ```
 Hot reloading saves time and gives you the flexibility to change a running track - a step towards the true experience of physical modular synthesis. 
+
+### More Composition
+
+use babies first synthie as input to two other modules, one low, one high, one timeshifted
+add them, filter them
+-> new complex synthie
+
 
 # Motivation and Basic Idea
 
