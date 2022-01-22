@@ -2,6 +2,7 @@
 # pip install torch
 # pip install ninja
 
+import functools
 import os
 import numpy as np
 from torch.utils.cpp_extension import load
@@ -11,12 +12,16 @@ from mz import base
 from mz import helpers
 
 
-pybind_backend_dir = os.path.dirname(os.path.realpath(__file__))
-src_dir = os.path.join(pybind_backend_dir, 'src')
-_cpp_backend = load(
-    name="cpp_backend",
-    sources=[os.path.join(src_dir, "backend.cpp")],
-    verbose=True)
+# We load the CPP only on demand, as it involves a JIT ninja compilation step.
+@functools.lru_cache()
+def _cpp_backend():
+  print("Loading CPP backend...")
+  pybind_backend_dir = os.path.dirname(os.path.realpath(__file__))
+  src_dir = os.path.join(pybind_backend_dir, 'src')
+  return load(
+      name="cpp_backend",
+      sources=[os.path.join(src_dir, "backend.cpp")],
+      verbose=True)
 
 
 # ------------------------------------------------------------------------------
@@ -84,7 +89,7 @@ class Butterworth(base.Module):
         raise NotImplementedError  # Swee above.
       else:
         with self._timer("Time in C++"):
-          _cpp_backend.butterworth_lowpass_or_highpass(
+          _cpp_backend().butterworth_lowpass_or_highpass(
             src, cutoffs, self._result_buf,
             self._w0, self._w1, self._w2,
             clock_signal.sample_rate, self.mode == "lp")
