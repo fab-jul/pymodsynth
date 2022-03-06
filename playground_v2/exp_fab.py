@@ -91,6 +91,14 @@ class TODOBUg(mz.Module):
 class Testing(mz.Module):
 
     def setup(self):
+
+        src = mz.SkewedTriangleSource(frequency=mz.Parameter(220, knob="l_mixer_lo"))
+        f = mz.Butterworth(src, cutoffs=mz.LFO(lo=100, hi=500),
+                           mode="lp")
+        self.out = f
+        return
+
+
         src = mz.SkewedTriangleSource(
             alpha=mz.Parameter(0.5, lo=0., hi=1., knob="r_mixer_mi"),
             frequency=mz.Parameter(300., key="f",
@@ -164,45 +172,46 @@ class NicStein(mz.BaseModule):
 
 class Nick(mz.Module):
 
-    bpm: int = 130
-
     def setup(self):
         
-        bpm = mz.Constant(self.bpm)
+        bpm = mz.Constant(100)
 
         length = mz.Constant(5000.)
-        base_freq = 420.
+        base_freq = 320.
         freq = base_freq * PiecewiseLinearEnvelope(
             xs=[0., 0.2, 0.4, 0.7],
-            ys=[1., 0.7, 0.4, 0.1],
-            length=length)
+            ys=[0.9, 0.5, 0.3, 0.1],
+            length=length) #+ mz.LFO(mz.Constant(0.1), lo=100, hi=400)
         src = SignalWithEnvelope(
             src=mz.TimeIndependentSineSource(frequency=freq),
             env=mz.ADSREnvelopeGenerator(total_length=length*2))
         trigger = mz.PeriodicTriggerSource(bpm)
         kick_trigger = trigger
         kick = mz.TriggerModulator(src, triggers=trigger)
+
         de = mz.DelayElement(time=2, feedback=0.9, hi_cut=0.7)
-        kick = mz.SimpleDelay(kick, de, mix=0.4)
-        de = mz.DelayElement(time=5, feedback=0.6, hi_cut=0.7)
+        kick = mz.SimpleDelay(kick, de, mix=0.3)
+        de = mz.DelayElement(time=10, feedback=0.6, hi_cut=0.4)
         kick = mz.SimpleDelay(kick, de, mix=0.2)
+
 
         # sNaRe
 
-        freq = 320 * PiecewiseLinearEnvelope(
-            xs=[0.,  0.1, 0.3, 0.5, 0.9],
-            ys=[0.3, 0.4, 0.9, 0.4, 0.3],
-            length=length)
+        #freq = 320 * PiecewiseLinearEnvelope(
+        #    xs=[0.,  0.1, 0.3, 0.5, 0.9],
+        #    ys=[0.1, 0.5, 1.0, 0.5, 0.1],
+        #    #ys=[0.1, 0.1, 0.2, 0.1, 0.1],
+        #    length=length)
 
-        src = mz.TimeIndependentSineSource(frequency=freq)
+        #src = mz.TimeIndependentSineSource(frequency=freq)
         src = Noise(mz.Constant(0.), eps=0.3)
         src = Overdrive(src, 0.8)
         src = Noise(src, eps=0.1)
         src = Overdrive(src, 0.8)
+
         src = mz.ButterworthFilter(src, f_low=mz.Parameter(13000, key="f"),
                                    mode="lp")
         
-
         src = SignalWithEnvelope(
             src=src,
             env=mz.ADSREnvelopeGenerator(
@@ -216,13 +225,17 @@ class Nick(mz.Module):
 
         snare = mz.TriggerModulator(src, triggers=trigger)
 
+
+        #self.out = snare + kick * mz.Parameter(1., lo=0., hi=1., knob="r_mixer_hi")
+        #return
+
         # hI hAt
 
-        freq = 320 * PiecewiseLinearEnvelope(
-            xs=[0.,  0.1, 0.3, 0.5, 0.9],
-            ys=[0.3, 0.4, 0.9, 0.4, 0.3],
-            length=length) 
-        src = mz.TimeIndependentSineSource(frequency=freq)
+#        freq = 320 * PiecewiseLinearEnvelope(
+#            xs=[0.,  0.1, 0.3, 0.5, 0.9],
+#            ys=[0.1, 0.4, 1., 0.4, 0.1],
+#            length=length) 
+        src = mz.TimeIndependentSineSource(frequency=mz.Constant(32))
         src = NicStein(src, eps = 0.1)
         src = NicStein(src)
 
@@ -241,29 +254,32 @@ class Nick(mz.Module):
                 total_length=mz.Constant(2000))
             )
 
-        trigger = mz.PeriodicTriggerSource(4 * bpm)
+        trigger = mz.PeriodicTriggerSource(bpm * 2)
 
         hi_hat = mz.TriggerModulator(src, triggers=trigger)
 
+
         melody_cycler = 120. * mz.FreqFactors.STEP.value ** mz.Cycler(
             #(1, 1, 2, 2, 8, 8,) +
-            (1, 1, 0, 0, 0, 0, 1, 1,
-             6, 6, 6, 8, 8, 9, 12, 12)
+            (1, 1, 1, 1, 0, 0, 0, 0,
+            6, 6, 6, 6, 8, 8, 8, 8,)
+            #(1, 1, 0, 0, 0, 0, 1, 1,
+             #6, 6, 6, 8, 8, 9, 12, 12)
         )
         melody = mz.TriggerModulator(melody_cycler, trigger)
         freq = mz.Hold(melody)
+        #freq = melody
         voice = mz.SkewedTriangleSource(
             alpha=mz.Parameter(0.9, lo=0., hi=1., knob="r_mixer_hi"),
             frequency=freq,
         )
         melody_trigger = trigger
-        src = mz.ADSREnvelopeGenerator(attack=mz.Cycler((3, 8)),#mz.Constant(3),
-                                       hold=mz.Cycler((1., 4., 8.)),
+        src = mz.ADSREnvelopeGenerator(attack=mz.Constant(0.01),#mz.Cycler((3, 8)),#mz.Constant(3),
+                                       hold=mz.Constant(4.),#mz.Cycler((1., 4., 8.)),
                                        release=mz.Constant(5),
-                                       total_length=mz.LFO(
-                                           frequency=mz.Constant(0.01),
-                                           lo=1000,hi=20000),
-        )
+                                       total_length=mz.Parameter(5000, 100, 10000, knob="r_mixer_lo")#mz.LFO(
+                                           #frequency=mz.Constant(0.01),
+                                           #lo=5000,hi=5000),
                                        #total_length=mz.Cycler((
                                        #                        4000,
                                        #                        10000,
@@ -275,7 +291,8 @@ class Nick(mz.Module):
                                        #                        6000,
                                        #                        10000,
                                        #                        4000,
-                                       #                        )))
+                                       #                        ))
+                                       )
         voice_env = mz.TriggerModulator(src, triggers=melody_trigger)
         voice_with_env = voice * voice_env
         voice_with_env = mz.SimpleDelay(voice_with_env, de, mix=0.2)
@@ -283,9 +300,13 @@ class Nick(mz.Module):
 
         voice = mz.ButterworthFilter(
             voice, 
-            f_low=mz.Parameter(5000, lo=1., hi=24000, knob="r_mixer_lo", clip=True), mode="lp")
+            f_low=mz.Parameter(5000, lo=1., hi=24000, knob="r_mixer_mi", clip=True), mode="lp")
+        self.out = voice + kick
 
-        self.out = hi_hat + kick + snare# + voice
+        return
+
+
+        self.out = snare #+ kick + hi_hat# + voice
 
 
 class RandomDropper(mz.BaseModule):
@@ -323,7 +344,7 @@ class JustVoice(mz.Module):
         # kick = )
 
         melody_cycler = 150. * mz.FreqFactors.STEP.value ** mz.Cycler(
-            (0, 0, 0, 3, 6, 8, 4, 3),
+            (0, 1, 12, 11, 10, 9),
         )
         #melody_cycler = mz.Cycler((0.1, 0.5, 0.7))
         trigger = mz.PeriodicTriggerSource(mz.Constant(bpm))
@@ -340,6 +361,7 @@ class JustVoice(mz.Module):
         env = RandomDropper(env, p=0.1, drop_to = 0.2)
         melody = mz.TriggerModulator(env, trigger)
         melody = melody * sine
+
         melody = Overdrive(melody * 2)/1.3
 
         freq = NicStein(mz.Constant(0.), eps = 0.3)*80 + 250
@@ -360,22 +382,22 @@ class JustVoice(mz.Module):
 
         weird_thing = mz.ButterworthFilter(werid_thing, f_low=mz.Parameter(1000, knob = "r_mixer_hi"), mode="lp")
 
-        self.out = weird_thing + melody + Nick(bpm)
-        return
         melody = mz.TriggerModulator(melody_cycler, trigger)
         voice = mz.SkewedTriangleSource(
             alpha=mz.Parameter(0.9, lo=0., hi=1., knob="r_mixer_hi"),
             frequency=freq,
         )
-        melody_trigger = trigger_hi
+        melody_trigger = trigger
         src = mz.ADSREnvelopeGenerator(attack=mz.Cycler((3, 8)),#mz.Constant(3),
                                        hold=mz.Cycler((1., 4., 8., 20)),
                                        release=mz.Constant(5),
                                        total_length=mz.Cycler((20000, 26000, 20000)))
         voice_env = mz.TriggerModulator(src, triggers=melody_trigger)
         voice_with_env = voice * voice_env
-        voice_with_env = mz.SimpleDelay(voice_with_env, de, mix=0.2)
+        #voice_with_env = mz.SimpleDelay(voice_with_env, de, mix=0.2)
         voice = voice_with_env
+        self.out = weird_thing + melody + Nick()
+        return
 
 
 
@@ -433,7 +455,7 @@ class NeatTunes(mz.Module):
 
         voice = mz.ButterworthFilter(
             voice, 
-            f_low=mz.Parameter(5000, lo=1., hi=24000, knob="r_mixer_lo", clip=True), mode="lp")
+            f_low=mz.Parameter(5000, lo=1., hi=23000, knob="r_mixer_lo", clip=True), mode="lp")
 
         # Bassline
 
@@ -465,9 +487,9 @@ class NeatTunes(mz.Module):
         #bassline = mz.SimpleDelay(bassline, de, mix=0.4)
         #bassline = mz.Reverb(bassline)
 
-        self.out = (drums #+ 
-                    #voice*mz.Parameter(0.4, 0., 1., knob="fx2_1") +
-                    #bassline*0.2
+        self.out = (drums + 
+                    voice*mz.Parameter(0.4, 0., 1., knob="fx2_1") +
+                    bassline*0.2
                     )
 
 
@@ -491,7 +513,7 @@ class Testing1(mz.Module):
         kick = mz.SimpleDelay(kick, de, mix=0.2)
 
         melody_trigger = mz.PeriodicTriggerSource(bpm*2)
-        melody_cycler = 150. * mz.FreqFactors.STEP.value ** mz.Cycler((0, 0, 0, 1))
+        melody_cycler = 150. * mz.FreqFactors.STEP.value ** RandomCycler((0,0,0,1)) #mz.Cycler((0, 0, 0, 1))
         melody = mz.TriggerModulator(melody_cycler, trigger)
         freq = mz.Hold(melody)
 
@@ -512,7 +534,7 @@ class Testing1(mz.Module):
             f_low=mz.Constant(6500),
             mode="lp")
 
-        mask = (1 + mz.SineSource(frequency=mz.Constant(0.1)))/2
+        mask = (1 + mz.SineSource(frequency=mz.Constant(0.03)))/2
         voice = voice_a * mask + voice_b * (1-mask)
 
         src = mz.ADSREnvelopeGenerator(attack=mz.Cycler((3, 8)),#mz.Constant(3),
@@ -550,6 +572,145 @@ class SimpleSynthVoice(mz.Module):
         self.seq = mz.StepSequencer()
         self.voice = mz.SineSource(frequency=220 ** (mz.FreqFactors.STEP.value * self.seq.output("cv")))
         self.voice = mz.ButterworthFilter(self.voide)
+
+
+class SimpleKick(mz.Module):
+    bpm: mz.Module
+
+    def setup(self):
+        base_freq = 320.
+        length = mz.Constant(2000.)
+        freq = base_freq * PiecewiseLinearEnvelope(
+            xs=[0., 0.2, 0.4, 0.7],
+            ys=[1., 0.7, 0.4, 0.1],
+            length=length)
+        src = SignalWithEnvelope(
+            src=mz.TimeIndependentSineSource(frequency=freq),
+            env=mz.ADSREnvelopeGenerator(total_length=length*2))
+        trigger = mz.PeriodicTriggerSource(self.bpm)
+        kick = mz.TriggerModulator(src, triggers=trigger)
+        self.out = kick
+
+
+class Orca2(mz.Module):
+    # https://www.youtube.com/watch?v=gSFrBFBd7vY
+    def setup(self):
+
+        bpm = mz.Constant(80)
+        triggers_3 = mz.PeriodicTriggerSource(bpm, note_value=1/3)
+        triggers_5 = mz.PeriodicTriggerSource(bpm, note_value=1/5)
+        triggers_7 = mz.PeriodicTriggerSource(bpm, note_value=1/7)
+
+        base_freq = mz.Constant(160)
+
+        kick = SimpleKick(bpm) 
+        voice_3 = ClickVoice(triggers_3, base_freq)
+        voice_5 = ClickVoice(triggers_5, base_freq * mz.FreqFactors.STEP.value ** 5)
+
+        voice_7 = ClickVoice(triggers_7, base_freq * mz.FreqFactors.STEP.value ** 7)
+
+        self.out = kick + voice_3 + voice_5 + voice_7
+
+
+class ClickVoice(mz.BaseModule):
+    triggers: mz.BaseModule    
+    frequency: mz.Module
+
+    def setup(self):
+        voice = mz.SkewedTriangleSource(
+            alpha=mz.Constant(0.5),
+            frequency=self.frequency,
+        )
+        click_env = mz.ADSREnvelopeGenerator(attack=mz.Constant(0.5),
+                                       hold=mz.Constant(1),
+                                       release=mz.Constant(3),
+                                       total_length=mz.Constant(3000)) # todo depends on bpm maybe
+        voice_env = mz.TriggerModulator(click_env, triggers=self.triggers)
+        self.out = voice * voice_env 
+
+class AtmosphericVoice(mz.BaseModule):
+    pass
+
+class Orca(mz.Module):
+
+    def setup(self):
+        bpm = mz.Constant(300)
+        C = 40
+
+        trigger_3 = mz.PeriodicTriggerSource(bpm * 105/3 / C)
+        trigger_5 = mz.PeriodicTriggerSource(bpm * 105/5 / C)
+        trigger_7 = mz.PeriodicTriggerSource(bpm * 105/7 / C)
+
+        base_freq = 320.
+        length = mz.Constant(2000.)
+        freq = base_freq * PiecewiseLinearEnvelope(
+            xs=[0., 0.2, 0.4, 0.7],
+            ys=[1., 0.7, 0.4, 0.1],
+            length=length)
+        src = SignalWithEnvelope(
+            src=mz.TimeIndependentSineSource(frequency=freq),
+            env=mz.ADSREnvelopeGenerator(total_length=length*2))
+        #bpm = mz.Constant(130)
+        trigger = mz.PeriodicTriggerSource(bpm)
+        kick = mz.TriggerModulator(src, triggers=trigger)
+#        de = mz.DelayElement(time=2, feedback=0.9, hi_cut=0.7)
+#        kick = mz.SimpleDelay(kick, de, mix=0.4)
+#        de = mz.DelayElement(time=5, feedback=0.6, hi_cut=0.7)
+#        kick = mz.SimpleDelay(kick, de, mix=0.2)
+        
+        trigger = mz.PeriodicTriggerSource(bpm)
+        melody_cycler = 80. * mz.FreqFactors.STEP.value ** mz.Cycler(
+            (1,))
+
+        mask = mz.Cycler((1, 0.01, 0.01))
+        mask = mz.Hold(mz.TriggerModulator(mask, trigger))
+
+        melody = mz.TriggerModulator(melody_cycler, trigger)
+        freq = mz.Hold(melody)
+        voice = mz.SkewedTriangleSource(
+            alpha=mz.Parameter(0.9, lo=0., hi=1., knob="r_mixer_hi"),
+            frequency=freq,
+        ) * mask
+
+        
+        melody_cycler = 120. * mz.FreqFactors.STEP.value ** mz.Cycler(
+            (1,))
+
+        mask = mz.Cycler((1, 0.01, 0.01, 0.01, 0.01))
+        mask = mz.Hold(mz.TriggerModulator(mask, trigger))
+
+        melody = mz.TriggerModulator(melody_cycler, trigger)
+        freq = mz.Hold(melody)
+        voice2 = mz.SkewedTriangleSource(
+            alpha=mz.Parameter(0.9, lo=0., hi=1., knob="r_mixer_hi"),
+            frequency=freq,
+        ) * mask
+
+        melody_cycler = 160. * mz.FreqFactors.STEP.value ** mz.Cycler(
+            (1,))
+
+        mask = mz.Cycler((1, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1))
+        mask = mz.Hold(mz.TriggerModulator(mask, trigger))
+
+        melody = mz.TriggerModulator(melody_cycler, trigger)
+        freq = mz.Hold(melody)
+        voice3 = mz.SkewedTriangleSource(
+            alpha=mz.Parameter(0.9, lo=0., hi=1., knob="r_mixer_hi"),
+            frequency=freq,
+        ) * mask
+
+
+        self.out = voice + kick + voice2 + voice3
+
+        return
+#        src = mz.ADSREnvelopeGenerator(attack=mz.Cycler((3, 8)),#mz.Constant(3),
+#                                       hold=mz.Cycler((1., 4., 8., 20)),
+#                                       release=mz.Constant(5),
+#                                       total_length=mz.Cycler((20000, 26000, 20000)))
+#        voice_env = mz.TriggerModulator(src, triggers=trigger)
+#        voice_with_env = voice * voice_env
+
+        self.out = mz.SineSource()
 
 
 
