@@ -94,25 +94,124 @@ class SkewedTriangleSource(base.Module):
         return ys * 2 - 1
 
 
+# ---
+# TODO
+
+
+class SignalWithEnvelope(base.BaseModule):
+
+    src: base.BaseModule
+    env: base.BaseModule
+
+    def out(self, clock_signal: base.ClockSignal):
+        # This defines the length!
+        env = self.env(clock_signal)
+        fake_clock_signal = clock_signal.change_length(env.shape[0])
+        src = self.src(fake_clock_signal)
+        return env * src
+
+
+class PiecewiseLinearEnvelope(base.Module):
+
+    xs: Sequence[float]
+    ys: Sequence[float]
+    length: base.SingleValueModule = base.Constant(500.)
+
+    def setup(self):
+        assert len(self.xs) == len(self.ys)
+        assert max(self.xs) <= 1.
+        assert min(self.xs) >= 0.
+        if self.xs[-1] < 1.:
+            self.xs = (*self.xs, 1.)
+            self.ys = (*self.ys, self.ys[-1])
+
+    def out_given_inputs(self, clock_signal: base.ClockSignal, length: float):
+        length: int = round(length)
+        prev_x_abs = 0
+        prev_y = 1.
+        pieces = []
+        for x, y in zip(self.xs, self.ys):
+            x_abs = round(x * length)
+            if x_abs - prev_x_abs <= 0:
+                prev_y = y
+                continue
+            pieces.append(np.linspace(prev_y, y, x_abs - prev_x_abs))
+            prev_x_abs = x_abs
+            prev_y = y
+        env = np.concatenate(pieces, 0)
+        env = clock_signal.pad_or_truncate(env, pad=env[-1])
+        return env
+
+
+
+
 # ------------------------------------------------------------------------------
 # Others
 
 class PeriodicTriggerSource(base.Module):
     
     bpm: base.SingleValueModule = base.Constant(130)
-    note_value: float = 1/4
-    rel_offset: float = 0
+    notes_per_beat: int = 1
 
     def out_given_inputs(self, clock_signal: base.ClockSignal, bpm: float):
         sample_rate = clock_signal.sample_rate
-        samples_per_forth = round(sample_rate / (bpm / 60))  # number of samples between 1/4 triggers
-        samples_per_pattern_element = round(samples_per_forth * 4 * self.note_value)
+        # Number of samples in a bar, as determined by the BPM.
+        samples_per_bar = round(sample_rate / (bpm / 60))
+        samples_per_note = round(samples_per_bar / self.notes_per_beat)
 
         # Elements are in {True, False}.
-        triggers = ((clock_signal.sample_indices + self.rel_offset * samples_per_pattern_element)
-                    % samples_per_pattern_element == 0)
+        triggers = clock_signal.sample_indices % samples_per_note == 0
         # Elements are in {1, 0}.
         return clock_signal.ones() * triggers
+
+
+class ASCIITriggerSource(base.Module):
+
+    bpm: base.SingleValueModule = base.Constant(130)
+    beats: str = "X.."
+    notes_per_beat: int = 4
+
+    def setup(self):
+        cycler = Cycler([1 if c == "X" else 0 for c in self.beats])
+        triggers = PeriodicTriggerSource(self.bpm, self.notes_per_beat)
+        self.out = TriggerModulator(cycler, triggers)
+
+
+# via https://pages.mtu.edu/~suits/notefreqs.html
+# lower case means "sharp" for now
+FREQUENCY_BY_NOTES = {
+    "A": 440,
+    "a": 466.16,
+    "B": 493.88,
+    "C": 523.25,
+    "c": 554.37,
+    "D": 587.33,
+    "d": 622.25,
+    "E": 659.25,
+    "F": 698.46,
+    "f": 739.99,
+    "G": 783.99,
+    "g": 830.61,
+}
+
+
+class ASCIIMelody(base.Module):
+
+    bpm: base.SingleValueModule = base.Constant(130)
+    melody: str = "A..G.."
+    # TODO: Should be a module but for this, the Cylcer
+    # has to take modules!!!
+    octave: int = 0
+    notes_per_beat: int = 4
+
+    def setup(self):
+        beats = "".join("." if c == "." else "X" for c in self.melody)
+        self.triggers = ASCIITriggerSource(self.bpm, beats, self.notes_per_beat)
+        octave_offset = 2 ** self.octave
+        cycler = Cycler([FREQUENCY_BY_NOTES[c] * octave_offset
+                         for c in self.melody if c != "."])
+        self.out = Hold(TriggerModulator(cycler, self.triggers))
+    
 
 
 class Hold(base.Module):
