@@ -9,6 +9,11 @@ import functools
 import numpy as np
 from numpy.polynomial import Polynomial
 
+from mz import pybind_backend
+
+
+Butterworth = pybind_backend.Butterworth
+
 
 @functools.lru_cache(maxsize=128)
 def basic_reverb_ir(delay: int, echo: int, p: float):

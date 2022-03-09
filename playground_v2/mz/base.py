@@ -1,4 +1,5 @@
 """Abstrace base classes."""
+
 import dataclasses
 import warnings
 import enum
@@ -46,7 +47,9 @@ SAMPLE_INDICES_DTYPE = int
 
 
 class ClockSignal(NamedTuple):
-    # Shape (num_samples,)
+    """Represents time steps and sample indices."""
+
+    # Time steps of samples (as real time). Shape (num_samples,)
     ts: np.ndarray
     # Shape (num_samples,)
     sample_indices: np.ndarray
@@ -146,8 +149,9 @@ class Clock:
         return self.get_clock_signal(np.arange(num_samples, dtype=SAMPLE_INDICES_DTYPE))
 
 
-class NoCacheKeyError(Exception):
-    """Used to indicate that a module has no cache key."""
+# TODO: Revisit
+# class NoCacheKeyError(Exception):
+#     """Used to indicate that a module has no cache key."""
 
 
 # This is extracted from flax, and makes sure BaseModule subclasses get
@@ -211,7 +215,7 @@ class BaseModule(metaclass=ModuleMeta):
 
     Notes:
     - Subclasses should use dataclass attributes to specify instance variables.
-      Like dataclasses, be careful with list efaults (use dataclasses.field).
+      Like dataclasses, be careful with list defaults (use dataclasses.field).
     - Subclasses can overwrite `setup` to provide custom initialization code
 
     Functinality:
@@ -245,21 +249,20 @@ class BaseModule(metaclass=ModuleMeta):
 
         self.monitor_sender = None
 
-        # Need to copy as it's updated inplace!
+        # Need to copy as it's updated inplace.
         keys_of_vars_before = set(vars(self))
         self.setup()
-        # TODO: test setup
         vars_after = vars(self)
 
         names_of_variables_added_in_setup = {
             k for k, v in vars_after.items()
             if k not in keys_of_vars_before}
         potential_state_vars = names_of_variables_added_in_setup | non_module_fields
-        # Note that we directly unpack state variables here via `get()`
+        # Note that we directly unpack state variables here via `get()`.
         state_vars = {k: vars_after[k].get() for k in potential_state_vars
                       if isinstance(vars_after[k], Stateful)}
         # Now set variables to the unpacked version, since we now know which ones they are.
-        # This allows users to then treat them as normal python types
+        # This allows users to then treat them as normal python types.
         for k, v in state_vars.items():
             setattr(self, k, v)
         self._state_vars_names = tuple(state_vars.keys())
@@ -453,10 +456,20 @@ class BaseModule(metaclass=ModuleMeta):
         return np.mean(o)
 
     def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
+        """Simple subclassing entry points.
+        
+        This can be used by subclasses that just need to
+        combine the numpy arrays that result from module calls.
+        `**inputs` will contain one element per `mz.Module`.
+
+        TODO: Add example
+        """
         raise NotImplementedError("Must be implemented by subclasses!")
 
     def __call__(self, clock_signal: ClockSignal):
         return self.out(clock_signal)
+
+    # Math support ------------------------------------------------------------
 
     def __mul__(self, other):
         """Implement module * scalar and module * module."""
