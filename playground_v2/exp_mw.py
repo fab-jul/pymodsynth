@@ -1,31 +1,36 @@
 
 import mz
-P = mz.Parameter
 
 
-
-class SignalWithEnvelope(mz.BaseModule):
-
-    src: mz.BaseModule
-    env: mz.BaseModule
-
-    def out(self, clock_signal: mz.ClockSignal):
-        # This defines the length!
-        env = self.env(clock_signal)
-        fake_clock_signal = clock_signal.change_length(env.shape[0])
-        src = self.src(fake_clock_signal)
-        return env * src
 
 
 class Test(mz.Module):
     def setup(self):
-        # self.lfo = mz.SineSource(frequency=(mz.Parameter(3) + 1)/2)
-        # self.src = mz.SineSource(frequency=self.lfo * 440)
-        # self.out = self.src
-        self.sick = mz.SkewedTriangleSource(frequency=P(220), alpha=mz.lift(mz.SineSource(P(1))))
-        self.out = mz.ButterworthFilter(self.sick,
-                                        f_low=P(10, key='k', lo=1, hi=40000, clip=True),
-                                        f_high=P(10000, key='l', lo=1, hi=40000, clip=True),
-                                        mode="bp")
+        bpm = mz.Constant(160)
+        kick_pattern = mz.Pattern(pattern=(1, 1, 1, 1), note_values=1/4)
+        kick_env = mz.KickEnvelope()
+        kick_track = mz.Track(bpm=bpm,
+                              pattern=kick_pattern,
+                              env_gen=kick_env)
+
+        note_base_freq = mz.Constant(220)
+        NL = 1/8
+        NV = 1/4
+
+        note_pattern1 = mz.NotePattern(pattern=(1, 2, 3), note_lengths=(NL, NL*20, NL/20), note_values=NV)
+        note_track1 = mz.NoteTrack(bpm=bpm, note_pattern=note_pattern1, carrier_base_frequency=note_base_freq * 1)
+        note_pattern2 = mz.NotePattern(pattern=(1, 0, 0, 0, 0), note_lengths=(NL, NL, NL, NL, NL), note_values=NV)
+        note_track2 = mz.NoteTrack(bpm=bpm, note_pattern=note_pattern2, carrier_base_frequency=note_base_freq * 1.333)
+        note_pattern3 = mz.NotePattern(pattern=(1, 0, 0, 0, 0, 0, 0), note_lengths=(NL, NL, NL, NL, NL, NL, NL), note_values=NV)
+        note_track3 = mz.NoteTrack(bpm=bpm, note_pattern=note_pattern3, carrier_base_frequency=note_base_freq * 1.999)
+
+        notes = mz.ButterworthFilter((note_track1 + note_track2 + note_track3)/3, f_low=mz.Constant(1), f_high=mz.Constant(1000), mode="bp")
+        self.out = kick_track + notes
+
+
+
+
+
+
 
 

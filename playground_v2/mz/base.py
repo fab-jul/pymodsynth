@@ -43,6 +43,7 @@ class Stateful:
 
 OUT_DTPYE = np.float32
 SAMPLE_INDICES_DTYPE = int
+SAMPLING_FREQUENCY = 44100
 
 
 class ClockSignal(NamedTuple):
@@ -593,6 +594,14 @@ class Module(BaseModule):
         result = self.out(clock_signal)
         clock_signal.assert_same_shape(result, self.name)
         return result
+
+
+class Id(Module):
+    """Every Monoid needs a neutral element"""
+    inp: Module
+
+    def setup(self):
+        self.out = self.inp
 
 
 # Use to annotate single values, TODO

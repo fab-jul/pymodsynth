@@ -15,13 +15,14 @@ class TestAscii(mz.Module):
         bpm = mz.Constant(130)
         kick_triggers = mz.ASCIITriggerSource(bpm, "X...")
 
-        voice_notes = mz.ASCIIMelody(bpm, "A.F.GG.B", octave=-2)
+        #voice_notes = mz.ASCIIMelody(bpm, "A.F.GG.B", octave=-2)
+        voice_notes = mz.ASCIIMelody(bpm, "..C.G...", octave=-2)
 
         voice_src = mz.SkewedTriangleSource(voice_notes, alpha=mz.Constant(0.9))
         env = mz.ADSREnvelopeGenerator(attack=mz.Cycler((3, 8)),#mz.Constant(3),
                                        hold=mz.Cycler((1., 4., 8.)),
                                        release=mz.Constant(5),
-                                       total_length=mz.Constant(5000))
+                                       total_length=mz.Constant(4000))
         env = mz.TriggerModulator(env, triggers=voice_notes.triggers)
         voice = env * voice_src
         voice = mz.ButterworthFilter(voice, f_low=mz.Constant(700), mode="lp")

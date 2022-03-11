@@ -1,7 +1,8 @@
-
-from typing import Sequence
+import dataclasses
+from typing import Sequence, Callable, List, Tuple
 from mz import base
 from mz import helpers
+from mz import envelopes
 import numpy as np
 
 
@@ -72,13 +73,11 @@ class TimeIndependentSineSource(base.Module):
 
 _EPS_ALPHA = 1e-7
 
-
 # TODO: Does not properly handle frequency = LFO!
 @helpers.mark_for_testing()
 class SkewedTriangleSource(base.Module):
     """A triangle that has the peak at alpha * period.
-    
-    Set to alpha = 1. for a saw, alpha = 0.5 for a symetrical triangle.
+    Set to alpha = 1. for a saw, alpha = 0.5 for a symmetrical triangle.
     """
 
     frequency: base.Module = base.Constant(220.)
@@ -89,7 +88,7 @@ class SkewedTriangleSource(base.Module):
         alpha = np.clip(alpha, _EPS_ALPHA, 1-_EPS_ALPHA)
         period = 1/frequency
         ys = (clock_signal.ts % period)/period * (1/alpha)
-        ys_flipped = 1/(1-alpha) -(clock_signal.ts % period)/period * (1/(1-alpha))
+        ys_flipped = 1/(1-alpha) - (clock_signal.ts % period)/period * (1/(1-alpha))
         ys = np.minimum(ys, ys_flipped)
         return ys * 2 - 1
 
@@ -148,6 +147,24 @@ class PiecewiseLinearEnvelope(base.Module):
 # ------------------------------------------------------------------------------
 # Others
 
+# via https://pages.mtu.edu/~suits/notefreqs.html
+# lower case means "sharp" for now
+FREQUENCY_BY_NOTES = {
+    "A": 440,
+    "a": 466.16,
+    "B": 493.88,
+    "C": 523.25,
+    "c": 554.37,
+    "D": 587.33,
+    "d": 622.25,
+    "E": 659.25,
+    "F": 698.46,
+    "f": 739.99,
+    "G": 783.99,
+    "g": 830.61,
+}
+
+
 class PeriodicTriggerSource(base.Module):
     
     bpm: base.SingleValueModule = base.Constant(130)
@@ -177,24 +194,6 @@ class ASCIITriggerSource(base.Module):
         self.out = TriggerModulator(cycler, triggers)
 
 
-# via https://pages.mtu.edu/~suits/notefreqs.html
-# lower case means "sharp" for now
-FREQUENCY_BY_NOTES = {
-    "A": 440,
-    "a": 466.16,
-    "B": 493.88,
-    "C": 523.25,
-    "c": 554.37,
-    "D": 587.33,
-    "d": 622.25,
-    "E": 659.25,
-    "F": 698.46,
-    "f": 739.99,
-    "G": 783.99,
-    "g": 830.61,
-}
-
-
 class ASCIIMelody(base.Module):
 
     bpm: base.SingleValueModule = base.Constant(130)
@@ -212,7 +211,6 @@ class ASCIIMelody(base.Module):
                          for c in self.melody if c != "."])
         self.out = Hold(TriggerModulator(cycler, self.triggers))
     
-
 
 class Hold(base.Module):
     """Takes a sparse signal and holds each element.
@@ -291,9 +289,9 @@ class Cycler(base.BaseModule):
 @helpers.mark_for_testing(shape_maker=lambda: Cycler((1, 2, 3)),
                           triggers=PeriodicTriggerSource)
 class TriggerModulator(base.Module):
-    """Puts a shape onto an envelope.
+    """Puts a shape onto an trigger.
 
-    The `shape_maker` can be an arbirary module. It will be called
+    The `shape_maker` can be an arbitrary module. It will be called
     for each trigger, and is expected to return a signal of whatever
     length is suitable.
     """
@@ -338,6 +336,124 @@ class TriggerModulator(base.Module):
         self.previous = result[clock_signal.num_samples:]
         res = result[:clock_signal.num_samples]
         return res
+
+
+# rhythm modules
+
+@dataclasses.dataclass(eq=True, unsafe_hash=True)
+class Pattern:
+    """Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)"""
+    pattern: Tuple
+    note_values: float
+
+
+@dataclasses.dataclass(eq=True, unsafe_hash=True)
+class NotePattern(Pattern):
+    """How long should every note in the pattern sound? Will be used as hold parameter of the envelope."""
+    note_lengths: Tuple
+
+
+class TriggerSource(base.Module):
+    """Take patterns and bpm and acts as a source of a single trigger track.
+    Set use_values to true if you don't just want ones in the output
+    """
+
+    bpm: base.Module
+    pattern: Pattern
+    use_values: bool = False
+
+    @staticmethod
+    def pattern_to_trigger_indices(clock_signal, samples_per_beat, pattern, note_value):
+        frame_len = clock_signal.num_samples
+        samples_per_note = round(samples_per_beat * note_value * 4)
+        spaced_trigger_indices = np.nonzero(pattern)[0] * samples_per_note
+        trigger_pattern_length = len(pattern) * samples_per_note
+        # what pattern-repetition are we at? where (offset) inside the frame is the current pattern-repetition?
+        offset = clock_signal.sample_indices[0] % trigger_pattern_length
+        reps = int(np.ceil(frame_len / trigger_pattern_length))
+        # print("reps", reps, frame_len, "/", trigger_pattern_length)
+        trigger_frames = np.concatenate(
+            [np.array(spaced_trigger_indices) + (i * trigger_pattern_length) for i in range(reps + 1)])
+        trigger_frames = np.array(list(filter(lambda x: offset <= x < offset + frame_len, trigger_frames)))
+        trigger_frames = trigger_frames - offset
+
+        # also return rotated pattern:
+        pos_in_trigger_frame = clock_signal.sample_indices[0] % trigger_pattern_length
+        percentage_in_trigger_frame = pos_in_trigger_frame / trigger_pattern_length
+        index = int(np.round(percentage_in_trigger_frame * len(pattern)))
+        rot_pat = np.roll(pattern, -index)
+        # print("rot_pat", rot_pat)
+        return trigger_frames.astype(int), rot_pat
+
+    def out(self, clock_signal: base.ClockSignal) -> np.ndarray:
+        bpm = np.mean(self.bpm(clock_signal))
+        samples_per_beat = base.SAMPLING_FREQUENCY / (bpm / 60)  # number of samples between 1/4 triggers
+        if samples_per_beat < 2.0:
+            print("Warning: Cannot deal with samples_per_beat < 2")  # TODO: but should!
+            samples_per_beat = 2.0
+        trigger_indices, rotated_pattern = TriggerSource.pattern_to_trigger_indices(clock_signal, samples_per_beat,
+                                                                                    self.pattern.pattern,
+                                                                                    self.pattern.note_values)
+        trigger_signal = clock_signal.zeros()
+        if not self.use_values:
+            trigger_signal[trigger_indices] = 1.0
+        else:
+            reps = int(np.ceil(len(trigger_indices) / len(rotated_pattern)))
+            repeated = np.tile(rotated_pattern, reps)
+            if len(trigger_indices) > 0:  # TODO: there is a shape bug here
+                trigger_signal[trigger_indices] = repeated[:len(trigger_indices)]
+            #print([x for x in trigger_signal if x > 0])
+        return trigger_signal
+
+
+class Track(base.Module):
+    bpm: base.Module
+    pattern: Pattern
+    env_gen: base.BaseModule
+    combinator: Callable = np.add
+
+    def setup(self):
+        trigger_source = TriggerSource(self.bpm, self.pattern)
+        self.out = TriggerModulator(triggers=trigger_source, shape_maker=self.env_gen, combinator=self.combinator)
+
+
+class NoteTrack(base.Module):
+    bpm: base.Module
+    note_pattern: NotePattern
+    # a BaseModule constructor with a hole of type length: Module
+    env_gen: Callable[[base.Module], base.BaseModule] = lambda t: envelopes.RectangleEnvGen(length=t)
+    carrier_waveform: Callable[[base.Module], base.Module] = lambda t: SineSource(frequency=t)
+    carrier_base_frequency: base.Module = base.Constant(220)
+    combinator: Callable = np.add
+
+    def setup(self):
+        samples_per_bar = base.SAMPLING_FREQUENCY / (self.bpm / 60) * 4
+
+        # config.envelope_gen takes a length module and produces an env_gen with the user's params and length
+        hold_signal = Hold(TriggerSource(bpm=self.bpm,
+                                         pattern=Pattern(pattern=self.note_pattern.note_lengths,
+                                                         note_values=1 / len(self.note_pattern.note_lengths)),
+                                         use_values=True
+                                         )
+                           )
+        env_gen = self.env_gen(samples_per_bar * hold_signal)
+        track = Track(bpm=self.bpm,
+                      pattern=self.note_pattern,
+                      env_gen=env_gen,
+                      combinator=self.combinator)
+
+        notes = tuple([base.FreqFactors.STEP.value ** n for n in self.note_pattern.pattern])
+        notes_pattern = Pattern(pattern=notes, note_values=self.note_pattern.note_values)
+        carrier = self.carrier_waveform(self.carrier_base_frequency * Hold(TriggerSource(bpm=self.bpm,
+                                                                                         pattern=notes_pattern,
+                                                                                         use_values=True)))
+        modulated = carrier * track
+        self.out = modulated
+
+
+
+
+
 
 
 # TODO: From here down, code is not working, because of rhythm issues. REVISIT!

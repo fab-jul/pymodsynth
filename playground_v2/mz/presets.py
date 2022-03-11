@@ -27,3 +27,18 @@ class Kick(base.Module):
         kick = filters.SimpleDelay(kick, de, mix=0.2)
         
         self.out = kick
+
+
+class KickEnvelope(base.BaseModule):
+    base_freq: base.Module = base.Constant(320)
+    length: base.Module = base.Constant(2000)
+
+    def setup(self):
+        freq = self.base_freq * envelopes.PiecewiseLinearEnvelope(
+            xs=[0., 0.2, 0.4, 0.7],
+            ys=[1., 0.7, 0.4, 0.1],
+            length=self.length)
+        self.out = envelopes.SignalWithEnvelope(
+            src=sources.TimeIndependentSineSource(frequency=freq),
+            env=envelopes.ADSREnvelopeGenerator(total_length=self.length * 2))  # TODO: why * 2 ?
+
