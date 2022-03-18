@@ -10,7 +10,8 @@ import numpy as np
 from mz import helpers
 from mz import midi_lib
 
-from typing import Any, Callable, Iterable, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import Any, Callable, Iterable, Mapping, NamedTuple, Optional, Sequence, Set, Tuple, TypeVar, Union, \
+    ClassVar
 
 
 # TODO: Should cache calls with the same sample index! in BaseModule or similar
@@ -256,7 +257,7 @@ class BaseModule(metaclass=ModuleMeta):
             k for k, v in vars_after.items()
             if k not in keys_of_vars_before}
         potential_state_vars = names_of_variables_added_in_setup | non_module_fields
-        # Note that we directly unpack state variables here via `get()`
+        # Note that we directly unpack state variables here via `Stateful.get()`
         state_vars = {k: vars_after[k].get() for k in potential_state_vars
                       if isinstance(vars_after[k], Stateful)}
         # Now set variables to the unpacked version, since we now know which ones they are.
@@ -494,6 +495,12 @@ class BaseModule(metaclass=ModuleMeta):
     def __rpow__(self, other):
         return _MathModule(operator.pow, other, self)
 
+    def __rshift__(self, other):
+        if isinstance(other, Collect):
+            other.input = self
+            return other
+        print("Warning: Can only >> into Collect(...)")
+        return self
 
 class CacheableBaseModule(BaseModule):
 
@@ -546,6 +553,26 @@ def _copy(src: Mapping[str, _GetAndSetModule], target: Mapping[str, _GetAndSetMo
 
 
 _Operator = Callable[[np.ndarray, np.ndarray], np.ndarray]
+
+
+class Collect(BaseModule):
+    """Special module to collect data. Only works after being shifted to, like: my_mod >> Collect('my_mod')"""
+    buffer_size: ClassVar[int] = 3
+
+    #input: BaseModule = None
+    name_coll: str = ""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.input = None
+        self.data = collections.deque()
+
+    def __call__(self, clock_signal: ClockSignal):
+        res = self.input(clock_signal)
+        self.data.append(res)
+        if len(self.data) > Collect.buffer_size:
+            self.data.popleft()
+        return res
 
 
 class _MathModule(BaseModule):
@@ -698,6 +725,7 @@ class BlockFutureCache:
 class FreqFactors(enum.Enum):
     OCTAVE = 2.
     STEP = 1.059463
+
 
 def lift(a):
     """Lifts a signal from [-1,1] to [0,1]"""
