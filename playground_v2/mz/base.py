@@ -281,11 +281,12 @@ class BaseModule(metaclass=ModuleMeta):
     def __setattr__(self, name: str, value: Any) -> None:
         if hasattr(self, name):
             pass  # Just overwriting, that's fine
-        elif getattr(self, "_did_setup", False):
+        elif getattr(self, "_did_setup", False) and not isinstance(self, Collect):
             # We hit this branch if we did setup and the user
             # sets a new instance variable, e.g., in `out`.
             warnings.warn(f"Detected assignment after setup: {name}. Note that graph changes "
                           "after setup are ignored.")
+
         super().__setattr__(name, value)
 
     def setup(self):
@@ -384,7 +385,9 @@ class BaseModule(metaclass=ModuleMeta):
                                prefix: str = "") -> Iterable[Tuple[str, "BaseModule"]]:
         yield prefix, self
         # Recurse into direct submodules.
-        for name, submodule in self._direct_submodules.items():
+        # experimental: do not use cached version because of late initialized Collect modules
+        direct_submodules = {name: a for name, a in vars(self).items() if isinstance(a, BaseModule)}
+        for name, submodule in direct_submodules.items():
             submodule_prefix = prefix + ("." if prefix else "") + name
             # Note that we use the cached _get_named_submodules here,
             # to reduce time complexity.
@@ -563,9 +566,9 @@ class Collect(BaseModule):
     name_coll: str = ""
 
     def __post_init__(self):
-        super().__post_init__()
         self.input = None
         self.data = collections.deque()
+        super().__post_init__()
 
     def __call__(self, clock_signal: ClockSignal):
         res = self.input(clock_signal)

@@ -125,57 +125,6 @@ class Recorder:
         scipy.io.wavfile.write(self._current_file_name, self._sample_rate, normalize_sig)
 
 
-
-
-class Plotter(Thread):
-    def __init__(self, root_module):
-        super().__init__()
-        self.root = root_module
-        plt.ion()
-
-    def update(self):
-        # todo: cache
-
-        mods = self.root._filter_submodules_by_cls(base.Collect)
-        self.mod_dict = {coll.name_coll: coll for _, coll in mods.items()}
-        self.fig, self.axes = plt.subplots(1, len(self.mod_dict))
-        self.lines = []
-        for ax, (name, mod) in zip(self.axes, self.mod_dict.items()):
-            # if not mod.data:
-            #     continue
-            self.lines.append(ax.plot([1,2,3]))
-
-        # for i, (name, mod) in enumerate(self.mod_dict.items()):
-        #     self.axes[i].plot([0,1,3])
-            # if mod.data:
-            #     plt.plot(mod.data[0])
-        # self.fig.canvas.draw()
-        # self.fig.canvas.flush_events()
-        # self.draw()
-        self.fig.show()
-
-    def run(self):
-        while True:
-            self.draw()
-            time.sleep(1)
-
-    def draw(self):
-        for line, ax, (name, mod) in zip(self.lines, self.axes, self.mod_dict.items()):
-            if not mod.data:
-                continue
-            ax.lines[0].set_ydata(mod.data[0])
-            #ax.relim()
-            ax.autoscale_view()
-            #line.set_ydata(mod.data[0])
-        self.fig.canvas.draw_idle()
-        self.fig.canvas.flush_events()
-        #time.sleep(1)
-        #self.fig.canvas.draw()
-        #self.fig.canvas.flush_events()
-
-
-
-
 class SynthesizerController:
 
     def __init__(self,
@@ -206,9 +155,6 @@ class SynthesizerController:
         self.modules_file_name = modules_file_name
         self.output_gen_class = output_gen_class
         self.output_gen = self._make_output_gen()
-
-        self.plotter = Plotter(self.output_gen)
-        self.plotter.update()
 
         modules_file_path = os.path.join(os.getcwd(), modules_file_name)
         if not os.path.isfile(modules_file_path):
@@ -281,9 +227,6 @@ class SynthesizerController:
         # All good, can use new code.
         self._set_output_gen(new_instance)
         print(f"Reloaded {self.modules_file_name}!")
-        print("########################")
-        print(self.output_gen._filter_submodules_by_cls(base.Collect))
-        self.plotter.update()
 
     def _set_output_gen(self, output_gen: base.Module):
         """Called on init and when `self.modules_file_name` changes."""
@@ -430,8 +373,6 @@ def start_sound_loop(modules_file_name: str,
         recorder=recorder,
         midi_knobs_file=midi_knobs_file,
         midi_port_name_regex=midi_port_name_regex)
-
-    syntheziser_controller.plotter.start()
 
     # Start audio stream.
     with sd.OutputStream(

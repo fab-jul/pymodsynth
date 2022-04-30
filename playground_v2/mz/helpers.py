@@ -1,6 +1,31 @@
 import collections
 from typing import TypeVar
 import numpy as np
+from mz import base
+
+
+def plot_module(mod_cls, num_frames=5):
+    import matplotlib.pyplot as plt
+    base.Collect.buffer_size = num_frames
+    mod = mod_cls()
+    mod_out = collections.deque()
+    clock = base.Clock(num_samples=2048, sample_rate=44100)
+    for i in range(num_frames):
+        clock_signal = clock()
+        mod_out.append(mod(clock_signal))
+    setattr(mod, "data", mod_out)
+    # data is in the Collect modules and mod_out now
+    mods = mod._filter_submodules_by_cls(base.Collect)
+    print(list(mod._iter_named_submodules()))
+    mod_dict = collections.OrderedDict((coll.name_coll, coll) for (_, coll) in mods.items())
+    mod_dict["output"] = mod
+    print("Plotting modules ", list(mod_dict.keys()))
+    fig, axes = plt.subplots(len(mod_dict), 1)
+    for ax, (name, module) in zip(axes, mod_dict.items()):
+        data = np.concatenate(module.data)
+        ax.plot(data, label=name)
+        ax.legend()
+    plt.show()
 
 
 class LRUDict:
