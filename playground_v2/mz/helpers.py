@@ -4,26 +4,28 @@ import numpy as np
 from mz import base
 
 
-def plot_module(mod_cls, num_frames=5):
+def plot_module(mod_cls, start_frame=0, num_frames=5):
     import matplotlib.pyplot as plt
     base.Collect.buffer_size = num_frames
     mod = mod_cls()
-    mod_out = collections.deque()
+    mod_out = []
     clock = base.Clock(num_samples=2048, sample_rate=44100)
-    for i in range(num_frames):
+    for i in range(start_frame + num_frames):
         clock_signal = clock()
         mod_out.append(mod(clock_signal))
-    setattr(mod, "data", mod_out)
+    mod_out = mod_out[start_frame:]
     # data is in the Collect modules and mod_out now
-    mods = mod._filter_submodules_by_cls(base.Collect)
-    print(list(mod._iter_named_submodules()))
-    mod_dict = collections.OrderedDict((coll.name_coll, coll) for (_, coll) in mods.items())
-    mod_dict["output"] = mod
-    print("Plotting modules ", list(mod_dict.keys()))
-    fig, axes = plt.subplots(len(mod_dict), 1)
-    for ax, (name, module) in zip(axes, mod_dict.items()):
+    mods = list(mod._filter_submodules_by_cls(base.Collect).values())
+    mods.append(mod)
+    setattr(mod, "data", mod_out)
+    setattr(mod, "name_coll", "output")
+    setattr(mod, "coll_num", len(mods) - 1)
+    mods = list(sorted(mods, key=lambda m: m.coll_num))
+    print("Plotting modules ", [m.name_coll for m in mods])
+    fig, axes = plt.subplots(len(mods), 1)
+    for ax, module in zip(axes, mods):
         data = np.concatenate(module.data)
-        ax.plot(data, label=name)
+        ax.plot(data, label=module.name_coll)
         ax.legend()
     plt.show()
 

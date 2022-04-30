@@ -31,7 +31,7 @@ class Test(mz.Module):
 
 
 if __name__ == "__main__":
-    mz.plot_module(Test, num_frames=10)
+    mz.plot_module(Test, start_frame=9, num_frames=5)
 
 
 

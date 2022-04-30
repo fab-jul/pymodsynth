@@ -561,6 +561,7 @@ _Operator = Callable[[np.ndarray, np.ndarray], np.ndarray]
 class Collect(BaseModule):
     """Special module to collect data. Only works after being shifted to, like: my_mod >> Collect('my_mod')"""
     buffer_size: ClassVar[int] = 3
+    counter: ClassVar[int] = 0
 
     #input: BaseModule = None
     name_coll: str = ""
@@ -568,6 +569,8 @@ class Collect(BaseModule):
     def __post_init__(self):
         self.input = None
         self.data = collections.deque()
+        self.coll_num = Collect.counter
+        Collect.counter += 1
         super().__post_init__()
 
     def __call__(self, clock_signal: ClockSignal):
