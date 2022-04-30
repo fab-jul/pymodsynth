@@ -4,7 +4,21 @@ import numpy as np
 from mz import base
 
 
-def plot_module(mod_cls, start_frame=0, num_frames=5):
+def cluster_mods(mods):
+    """Take flat ordered list of modules with optional cluster names.
+    Modules with empty cluster names become singleton lists.
+    Modules with same cluster names go into same list, keeping the order."""
+    empty_counter = 0
+    cluster_dict = collections.defaultdict(list)
+    for mod in mods:
+        if mod.cluster_name == "":
+            cluster_dict["#" + str(empty_counter)] = [mod]
+            empty_counter += 1
+            continue
+        cluster_dict[mod.cluster_name].append(mod)
+    return cluster_dict
+
+def plot_module(mod_cls, start_frame=0, num_frames=5, cluster=True):
     import matplotlib.pyplot as plt
     base.Collect.buffer_size = num_frames
     mod = mod_cls()
@@ -19,14 +33,28 @@ def plot_module(mod_cls, start_frame=0, num_frames=5):
     mods.append(mod)
     setattr(mod, "data", mod_out)
     setattr(mod, "name_coll", "output")
+    setattr(mod, "cluster_name", "")
     setattr(mod, "coll_num", len(mods) - 1)
     mods = list(sorted(mods, key=lambda m: m.coll_num))
     print("Plotting modules ", [m.name_coll for m in mods])
-    fig, axes = plt.subplots(len(mods), 1)
-    for ax, module in zip(axes, mods):
-        data = np.concatenate(module.data)
-        ax.plot(data, label=module.name_coll)
-        ax.legend()
+    if not cluster:
+        fig, axes = plt.subplots(len(mods), 1)
+        for ax, module in zip(axes, mods):
+            data = np.concatenate(module.data)
+            ax.plot(data, label=module.name_coll)
+            ax.legend()
+    else:
+        mod_clusters = cluster_mods(mods)
+        print("clusters", mod_clusters)
+        fig, axes = plt.subplots(len(mod_clusters), 1)
+        for ax, (cluster_name, cluster) in zip(axes, mod_clusters.items()):
+            if cluster_name[0] == "#":
+                cluster_name = ""
+            for module in cluster:
+                data = np.concatenate(module.data)
+                ax.plot(data, label=module.name_coll)
+            ax.set_title(cluster_name)
+            ax.legend()
     plt.show()
 
 

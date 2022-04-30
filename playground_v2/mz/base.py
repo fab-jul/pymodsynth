@@ -281,7 +281,8 @@ class BaseModule(metaclass=ModuleMeta):
     def __setattr__(self, name: str, value: Any) -> None:
         if hasattr(self, name):
             pass  # Just overwriting, that's fine
-        elif getattr(self, "_did_setup", False) and not isinstance(self, Collect):
+        elif getattr(self, "_did_setup", False) and not isinstance(self, Collect) and name not in ["coll_num", "name_coll", "cluster_name", "data"]:
+            # lol @ exceptions here
             # We hit this branch if we did setup and the user
             # sets a new instance variable, e.g., in `out`.
             warnings.warn(f"Detected assignment after setup: {name}. Note that graph changes "
@@ -565,6 +566,7 @@ class Collect(BaseModule):
 
     #input: BaseModule = None
     name_coll: str = ""
+    cluster_name: str = ""
 
     def __post_init__(self):
         self.input = None
@@ -575,6 +577,13 @@ class Collect(BaseModule):
 
     def __call__(self, clock_signal: ClockSignal):
         res = self.input(clock_signal)
+        self.data.append(res)
+        if len(self.data) > Collect.buffer_size:
+            self.data.popleft()
+        return res
+
+    def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
+        res = self.input(clock_signal, **inputs)
         self.data.append(res)
         if len(self.data) > Collect.buffer_size:
             self.data.popleft()
