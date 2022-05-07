@@ -49,6 +49,7 @@ class PiecewiseLinearEnvelope(base.BaseModule):
 
     def out_given_inputs(self, clock_signal: base.ClockSignal, length: float):
         length: int = round(length)
+        print("#$envelope length", length)
         prev_x_abs = 0
         prev_y = 1.
         pieces = []
@@ -65,6 +66,13 @@ class PiecewiseLinearEnvelope(base.BaseModule):
         return env
 
 
+class RectangleEnvGen_other(base.BaseModule):
+    length: base.Module
+
+    def setup(self):
+        self.out = PiecewiseLinearEnvelope([0.0, 0.1, 0.9], [0.0, 0.8, 0.9], self.length)
+
+
 class RectangleEnvGen(base.BaseModule):
     length: base.Module
 
@@ -74,18 +82,19 @@ class RectangleEnvGen(base.BaseModule):
         #print(length)
         return np.ones((length,))
 
+# see sources.SignalWithEnvelope
+# class SignalWithEnvelope(base.BaseModule):
+#
+#     src: base.BaseModule
+#     env: base.BaseModule
+#
+#     def out(self, clock_signal: base.ClockSignal):
+#         # This defines the length!
+#         env = self.env(clock_signal)
+#         fake_clock_signal = clock_signal.change_length(env.shape[0])
+#         src = self.src(fake_clock_signal)
+#         return env * src
 
-class SignalWithEnvelope(base.BaseModule):
-
-    src: base.BaseModule
-    env: base.BaseModule
-
-    def out(self, clock_signal: base.ClockSignal):
-        # This defines the length!
-        env = self.env(clock_signal)
-        fake_clock_signal = clock_signal.change_length(env.shape[0])
-        src = self.src(fake_clock_signal)
-        return env * src
 
 
 

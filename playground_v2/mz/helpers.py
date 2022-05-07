@@ -22,6 +22,7 @@ def plot_module(mod_cls, start_frame=0, num_frames=5, cluster=True):
     import matplotlib.pyplot as plt
     base.Collect.buffer_size = num_frames
     mod = mod_cls()
+    # mod >> base.Collect("lo") TODO
     mod_out = []
     clock = base.Clock(num_samples=2048, sample_rate=44100)
     for i in range(start_frame + num_frames):

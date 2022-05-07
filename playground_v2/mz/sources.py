@@ -10,6 +10,7 @@ import numpy as np
 # Sine
 
 
+
 @helpers.mark_for_testing()
 class SineSource(base.Module):
     frequency: base.Module = base.Constant(440.)
@@ -216,7 +217,7 @@ class Hold(base.Module):
     """Takes a sparse signal and holds each element.
 
     Example:
-    
+
         input:  [0, 0, 10,  0,  0, 5, 0, 0]
         output: [0, 0, 10, 10, 10, 5, 5, 5]
 
@@ -237,11 +238,12 @@ class Hold(base.Module):
             indices_non_zero.insert(0, 0)
         indices_non_zero.append(src.shape[0])
         res = np.concatenate(
-            [np.ones((end-start,)) * src[start] 
+            [np.ones((end-start,)) * src[start]
              for start, end in zip(indices_non_zero, indices_non_zero[1:])],
             axis=0)
         self.prev_value = res[-1]
         return res
+
 
 
 class Cycler(base.BaseModule):
@@ -307,11 +309,19 @@ class TriggerModulator(base.Module):
 
     def out(self, clock_signal: base.ClockSignal):
         """Generate one shape per trigger."""
-
+        print("clock signal length", len(clock_signal.ts))
         trigger_indices = np.nonzero(self.triggers(clock_signal))[0]
-
-        envelopes = [self.shape_maker(clock_signal.clock.get_clock_signal_with_start(i)) 
+        # trigger_indices = []
+        # for ti in trigger_indices_:
+        #     trigger_indices.append(clock_signal.sample_indices[ti])
+        # print("#####trigger_indices", trigger_indices)
+        # ???
+        envelopes = [self.shape_maker(clock_signal.clock.get_clock_signal_with_start(i, length=len(clock_signal.ts)))
                      for i in trigger_indices]
+        # import matplotlib.pyplot as plt
+        # for x in envelopes:
+        #     plt.plot(x)
+        # plt.show()
 
         current_signal = clock_signal.zeros()
         if self.previous is not None and len(self.previous) > 0:
@@ -337,6 +347,51 @@ class TriggerModulator(base.Module):
         res = result[:clock_signal.num_samples]
         return res
 
+
+# class RealTriggerModulator(base.Module):
+#     """
+#     Simplified OldTriggerModulator. Put an envelope on a trigger track.
+#     Stateful:
+#     Put an envelope on every trigger. If result is longer than a frame, keep the rest for the next call.
+#     Combine overlaps with a suitable function: max, fst, snd, add, ...
+#     """
+#
+#
+#
+#     def __init__(self, trigger_signal: sources.TriggerSource, envelope_gen: base.BaseModule, combinator=np.add):
+#         super().__init__()
+#         self.previous = None
+#         self.trigger_signal = trigger_signal
+#         self.env_gen = envelope_gen
+#         self.combinator = combinator
+#
+#     def __call__(self, clock_signal: ClockSignal):
+#         """Generate one envelope per trigger"""
+#         trigger_indices = np.nonzero(self.trigger_signal(clock_signal))[0]
+#         envelopes = self.env_gen(clock_signal, desired_indices=trigger_indices)
+#         current_signal = clock_signal.zeros()
+#         previous_signal = self.previous if self.previous is not None and len(self.previous) > 0 else np.zeros(
+#             shape=clock_signal.ts.shape)
+#         if envelopes:
+#             # does any envelope go over frame border?
+#             latest_envelope_end = max(i + len(env) for i, env in zip(trigger_indices, envelopes))
+#             if latest_envelope_end > clock_signal.num_samples:
+#                 remainder = latest_envelope_end - clock_signal.num_samples
+#             else:
+#                 remainder = 0
+#             current_signal = np.pad(current_signal, pad_width=((0, remainder), (0, 0)))
+#             for i, envelope in zip(trigger_indices, envelopes):
+#                 current_signal[i:i + len(envelope)] = envelope.reshape((-1, 1))
+#                 # plt.plot(envelope)
+#                 # plt.show()
+#         # combine the old and new signal using the given method
+#         max_len = max(len(previous_signal), len(current_signal))
+#         previous_signal = np.pad(previous_signal, pad_width=((0, max_len - len(previous_signal)), (0, 0)))
+#         current_signal = np.pad(current_signal, pad_width=((0, max_len - len(current_signal)), (0, 0)))
+#         result = self.combinator(previous_signal, current_signal)
+#         self.previous = result[len(clock_signal.ts):]
+#         res = result[:len(clock_signal.ts)]
+#         return res
 
 # rhythm modules
 
@@ -395,6 +450,7 @@ class TriggerSource(base.Module):
                                                                                     self.pattern.pattern,
                                                                                     self.pattern.note_values)
         trigger_signal = clock_signal.zeros()
+        print("@@ trigger signal", len(trigger_signal))
         if not self.use_values:
             trigger_signal[trigger_indices] = 1.0
         else:
@@ -403,6 +459,7 @@ class TriggerSource(base.Module):
             if len(trigger_indices) > 0:  # TODO: there is a shape bug here
                 trigger_signal[trigger_indices] = repeated[:len(trigger_indices)]
             #print([x for x in trigger_signal if x > 0])
+        #print("trigger signal len", len(trigger_signal), trigger_signal)
         return trigger_signal
 
 
@@ -413,7 +470,7 @@ class Track(base.Module):
     combinator: Callable = np.add
 
     def setup(self):
-        trigger_source = TriggerSource(self.bpm, self.pattern)
+        trigger_source = TriggerSource(self.bpm, self.pattern) >> base.Collect("ts")
         self.out = TriggerModulator(triggers=trigger_source, shape_maker=self.env_gen, combinator=self.combinator)
 
 
@@ -427,20 +484,21 @@ class NoteTrack(base.Module):
     combinator: Callable = np.add
 
     def setup(self):
-        samples_per_bar = base.SAMPLING_FREQUENCY / (self.bpm / 60) * 4
-
+        samples_per_bar = base.SAMPLING_FREQUENCY / (self.bpm / 60) * 4 >> base.Collect("samples per bar")
         # config.envelope_gen takes a length module and produces an env_gen with the user's params and length
         hold_signal = Hold(TriggerSource(bpm=self.bpm,
                                          pattern=Pattern(pattern=self.note_pattern.note_lengths,
                                                          note_values=1 / len(self.note_pattern.note_lengths)),
                                          use_values=True
-                                         )
-                           )
-        env_gen = self.env_gen(samples_per_bar * hold_signal)
+                                         ) >> base.Collect("triggers")
+                           ) >> base.Collect("hold")
+        print(Pattern(pattern=self.note_pattern.note_lengths, note_values=1 / len(self.note_pattern.note_lengths)))
+        env_length = samples_per_bar * hold_signal >> base.Collect("env_length")
+        env_gen = self.env_gen(env_length) >> base.Collect("env_gen")
         track = Track(bpm=self.bpm,
                       pattern=self.note_pattern,
                       env_gen=env_gen,
-                      combinator=self.combinator)
+                      combinator=self.combinator) >> base.Collect("track")
 
         notes = tuple([base.FreqFactors.STEP.value ** n for n in self.note_pattern.pattern])
         notes_pattern = Pattern(pattern=notes, note_values=self.note_pattern.note_values)

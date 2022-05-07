@@ -38,7 +38,7 @@ class KickEnvelope(base.BaseModule):
             xs=[0., 0.2, 0.4, 0.7],
             ys=[1., 0.7, 0.4, 0.1],
             length=self.length)
-        self.out = envelopes.SignalWithEnvelope(
+        self.out = sources.SignalWithEnvelope(
             src=sources.TimeIndependentSineSource(frequency=freq),
             env=envelopes.ADSREnvelopeGenerator(total_length=self.length * 2))  # TODO: why * 2 ?
 

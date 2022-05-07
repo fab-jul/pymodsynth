@@ -130,7 +130,7 @@ class Clock:
         self.i += self.num_samples
         return clock_signal
 
-    def get_clock_signal_with_start(self, start_idx: int, length: int = 5):
+    def get_clock_signal_with_start(self, start_idx: int, length: int):
         sample_indices = np.arange(start_idx, start_idx + length, 
                                    dtype=SAMPLE_INDICES_DTYPE)
         return self.get_clock_signal(sample_indices)
@@ -580,6 +580,7 @@ class Collect(BaseModule):
         self.data.append(res)
         if len(self.data) > Collect.buffer_size:
             self.data.popleft()
+        print("@", self.name_coll, len(res), res)
         return res
 
     def out_given_inputs(self, clock_signal: ClockSignal, **inputs):
@@ -587,6 +588,7 @@ class Collect(BaseModule):
         self.data.append(res)
         if len(self.data) > Collect.buffer_size:
             self.data.popleft()
+        print("@", self.name_coll, len(res), res)
         return res
 
 
