@@ -1,5 +1,6 @@
 import dataclasses
-from typing import Sequence, Callable, List, Tuple
+from functools import cache
+from typing import Sequence, Callable, List, Tuple, Optional
 from mz import base
 from mz import helpers
 from mz import envelopes
@@ -397,15 +398,69 @@ class TriggerModulator(base.Module):
 
 @dataclasses.dataclass(eq=True, unsafe_hash=True)
 class Pattern:
-    """Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)"""
+    """
+    Input to TriggerSource. E.g., ([1, 0, 1, 0], 1/4) or ([0, 1, 1], 1/8)
+
+    pattern: Which note (relative pitch) is played in which order?
+    note_values: distance between note starts (1/3, 1/4, 1/8 etc). This is independent of note_lengths.
+    note_lengths: how long should every note in the pattern sound? Will be used as hold parameter of the envelope.
+    So a break (no sound) can be achieved with a 0 in the pattern or a note_length shorter than note_values.
+
+    Drum patterns don't need a note_lengths.
+    """
     pattern: Tuple
     note_values: float
+    note_lengths: Optional[Tuple]
 
 
-@dataclasses.dataclass(eq=True, unsafe_hash=True)
-class NotePattern(Pattern):
-    """How long should every note in the pattern sound? Will be used as hold parameter of the envelope."""
-    note_lengths: Tuple
+class NewTriggerSource(base.BaseModule):
+    """
+    Repeat the given pattern. The effective pattern duration is pattern.note_lengths*len(pattern.pattern). The
+    individual notes can be shorter or longer than pattern.note_lengths, as given in pattern.note_values.
+    The output for a given frame is a set of index,value pairs, signifying that at time clock_signal[index], the
+    output is equal to value, and 0 at all other times.
+    A NewTriggerModulator is necessary to turn this output into a signal.
+    Hold for an actual signal of values/0 of length clock_signal.
+    """
+    bpm: base.Module
+    pattern: Pattern
+    hold: bool = False
+
+    @cache
+    def _make_two_bars(self, bpm, hold):  # not just one bar, to simplify wraparound
+        samples_per_bar = 4 * base.SAMPLING_FREQUENCY / (bpm / 60)
+        # duration of pattern in bars
+        pattern, note_values, note_lengths = self.pattern
+        pattern_duration_bars = note_lengths * len(pattern)  # e.g. 6 notes á 1/4 = 6/4 = 1.5 bars
+        pattern_duration_samples = int(samples_per_bar * pattern_duration_bars)
+        bar = np.zeros(shape=(pattern_duration_samples * 2,))
+        # at intervals of note_length, set either a single value or all (if hold)
+        samples_between_notes = pattern_duration_samples / len(pattern)
+        indices = []
+        for index, value in enumerate(list(pattern)*2):
+            note_length = note_lengths[index % len(note_lengths)]
+            indices.append((index * samples_between_notes, value))
+            if not hold:  # single value at index
+                bar[index * samples_between_notes] = value
+            else:
+                bar[index * samples_between_notes:index * samples_between_notes + note_length] = value
+        return bar, indices
+
+    def out(self, clock_signal: base.ClockSignal):
+        bpm = np.mean(self.bpm(clock_signal))
+        two_bars, indices = self._make_two_bars(bpm, self.hold)  # indices is list of tuples of index, value
+        # where is frame start in the pattern?
+        frame_start = clock_signal.sample_indices[0] % len(two_bars)
+        frame_end   = clock_signal.sample_indices[-1] % len(two_bars)
+        if self.hold:
+            return two_bars[frame_start:frame_end]
+        # we are interested in all the index,value pairs where the index is between frame_start and frame_end
+        # and we need to shift these indices into the frame
+        ixs_of_interest = [(frame_start + i % len(clock_signal.ts), v) for (i, v) in indices if frame_start <= i <= frame_end]
+        return ixs_of_interest
+
+
+
 
 
 class TriggerSource(base.Module):
@@ -470,7 +525,7 @@ class Track(base.Module):
     combinator: Callable = np.add
 
     def setup(self):
-        trigger_source = TriggerSource(self.bpm, self.pattern) >> base.Collect("ts")
+        trigger_source = TriggerSource(self.bpm, self.pattern, use_values=True) >> base.Collect("ts")
         self.out = TriggerModulator(triggers=trigger_source, shape_maker=self.env_gen, combinator=self.combinator)
 
 

@@ -7,7 +7,7 @@ import mz
 class Test(mz.Module):
     def setup(self):
         bpm = mz.Constant(2000)
-        kick_pattern = mz.Pattern(pattern=(1, 1, 1, 1), note_values=1/4)
+        kick_pattern = mz.Pattern(pattern=(1, 2, 1, 3), note_values=1/4)
         kick_env = mz.KickEnvelope()
         kick_track = mz.Track(bpm=bpm,
                               pattern=kick_pattern,
@@ -17,7 +17,7 @@ class Test(mz.Module):
         NL = 1/8
         NV = 1/4
 
-        note_pattern1 = mz.NotePattern(pattern=(1, 0, 3), note_lengths=(NL, NL*3, NL/3), note_values=NV)
+        note_pattern1 = mz.NotePattern(pattern=(1, 2, 3), note_lengths=(NL, NL*3, NL*2), note_values=1/3)
         note_track1 = mz.NoteTrack(bpm=bpm, note_pattern=note_pattern1, carrier_base_frequency=note_base_freq * 1) #>> mz.Collect("nt1", "notes")
         note_pattern2 = mz.NotePattern(pattern=(1, 0, 0, 0, 0), note_lengths=(NL, NL, NL, NL, NL), note_values=NV)
         note_track2 = mz.NoteTrack(bpm=bpm, note_pattern=note_pattern2, carrier_base_frequency=note_base_freq * 1.333) #>> mz.Collect("nt2", "notes")
@@ -32,7 +32,7 @@ class Test(mz.Module):
 
 
 if __name__ == "__main__":
-    mz.plot_module(Test, start_frame=0, num_frames=2, cluster=True)
+    mz.plot_module(Test, start_frame=0, num_frames=5, cluster=False)
 
 
 
